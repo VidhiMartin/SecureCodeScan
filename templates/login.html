@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login | Secure Code Scanner</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        #mfa-section { display: none; text-align: center; }
+        .mfa-input {
+            width: 100%;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid #333;
+            color: #00ff88;
+            padding: 12px;
+            margin: 20px 0;
+            text-align: center;
+            font-size: 1.8rem;
+            letter-spacing: 5px;
+            border-radius: 6px;
+            outline: none;
+        }
+        .mfa-input:focus { border-color: #00ff88; box-shadow: 0 0 10px rgba(0,255,136,0.2); }
+
+        #error-msg {
+            display: none;
+            background: rgba(244,63,94,0.1);
+            border: 1px solid #f43f5e;
+            color: #f43f5e;
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body class="auth-body">
+<div class="auth-container">
+    <div class="auth-card">
+
+        <!-- Login Section -->
+        <div id="login-section">
+            <div class="auth-header">
+                <div class="auth-icon"><i class="fas fa-user-shield"></i></div>
+                <h1 class="logo">Secure Code Scanner</h1>
+                <p class="subtitle">Enter credentials to access the vault</p>
+            </div>
+
+            <div id="error-msg"></div>
+
+            <div id="loginForm">
+                <div class="input-group">
+                    <i class="fas fa-envelope"></i>
+                    <input type="email" id="email" required placeholder="Email Address" autocomplete="email">
+                </div>
+                <div class="input-group">
+                    <i class="fas fa-lock"></i>
+                    <input type="password" id="password" required placeholder="Password" autocomplete="current-password">
+                </div>
+                <div style="text-align:right; margin-bottom:20px;">
+                    <a href="#" id="forgotPasswordBtn" style="color:#888; font-size:0.8rem;">Forgot password?</a>
+                </div>
+                <button class="btn-primary" type="button" id="submitBtn" onclick="handleLogin()">
+                    <i class="fas fa-sign-in-alt"></i> Sign In
+                </button>
+            </div>
+        </div>
+
+        <!-- MFA Section -->
+        <div id="mfa-section">
+            <div class="auth-header">
+                <div class="auth-icon" style="color:#00ff88;"><i class="fas fa-key"></i></div>
+                <h1 class="logo">Security Challenge</h1>
+                <p class="subtitle">Enter the 6-digit code from your authenticator app</p>
+            </div>
+            <input type="text" id="login-mfa-code" class="mfa-input" placeholder="000000"
+                   maxlength="6" inputmode="numeric" pattern="\d{6}" autocomplete="one-time-code">
+            <button class="btn-primary" type="button" id="mfaBtn" onclick="submitMFALogin()">
+                <i class="fas fa-unlock-keyhole"></i> Verify &amp; Access
+            </button>
+        </div>
+
+        <div class="auth-footer"><p>New operative? <a href="/signup">Request Access</a></p></div>
+    </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyD9llGi3Rq4eTgOA4QLI2hGK00v-jx0bCs",
+        authDomain: "code-scanner-91d48.firebaseapp.com",
+        projectId: "code-scanner-91d48"
+    };
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    auth.tenantId = "Enterprise-Test-avvoo";
+
+    // Redirect already-authenticated users
+    auth.onAuthStateChanged((user) => {
+        if (user) window.location.href = "/scanner";
+    });
+
+    let _authedUser = null;  // Holds the Firebase user after password auth
+
+    function showError(msg) {
+        const el = document.getElementById("error-msg");
+        el.textContent = msg;
+        el.style.display = "block";
+    }
+    function hideError() {
+        document.getElementById("error-msg").style.display = "none";
+    }
+
+    async function handleLogin() {
+        hideError();
+        const email = document.getElementById("email").value.trim();
+        const password = document.getElementById("password").value;
+        const btn = document.getElementById("submitBtn");
+
+        if (!email || !password) { showError("Please fill in all fields."); return; }
+
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verifying...';
+        btn.disabled = true;
+
+        try {
+            const userCred = await auth.signInWithEmailAndPassword(email, password);
+            _authedUser = userCred.user;
+
+            // Check MFA status server-side
+            const mfaRes = await fetch('/mfa/status', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: email })
+            });
+            const mfaData = await mfaRes.json();
+
+            if (mfaData.enabled) {
+                // Show MFA challenge
+                document.getElementById('login-section').style.display = 'none';
+                document.getElementById('mfa-section').style.display = 'block';
+                document.getElementById('login-mfa-code').focus();
+            } else {
+                // No MFA — proceed directly
+                const token = await _authedUser.getIdToken(true);
+                localStorage.setItem("token", token);
+                window.location.href = "/scanner";
+            }
+        } catch (err) {
+            showError(friendlyError(err.code));
+            btn.innerHTML = '<i class="fas fa-sign-in-alt"></i> Sign In';
+            btn.disabled = false;
+        }
+    }
+
+    async function submitMFALogin() {
+        hideError();
+        const code = document.getElementById('login-mfa-code').value.trim();
+        const btn = document.getElementById('mfaBtn');
+
+        if (!/^\d{6}$/.test(code)) { showError("Please enter a valid 6-digit code."); return; }
+
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verifying...';
+        btn.disabled = true;
+
+        try {
+            const email = document.getElementById("email").value.trim();
+            const res = await fetch('/mfa/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: email, code: code })
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                const token = await _authedUser.getIdToken(true);
+                localStorage.setItem("token", token);
+                window.location.href = "/scanner";
+            } else {
+                showError(data.message || "Invalid security code. Please try again.");
+                btn.innerHTML = '<i class="fas fa-unlock-keyhole"></i> Verify & Access';
+                btn.disabled = false;
+            }
+        } catch (err) {
+            showError("Network error. Please try again.");
+            btn.innerHTML = '<i class="fas fa-unlock-keyhole"></i> Verify & Access';
+            btn.disabled = false;
+        }
+    }
+
+    // Allow Enter key on MFA input
+    document.addEventListener("DOMContentLoaded", () => {
+        document.getElementById("login-mfa-code").addEventListener("keydown", (e) => {
+            if (e.key === "Enter") submitMFALogin();
+        });
+        document.getElementById("password").addEventListener("keydown", (e) => {
+            if (e.key === "Enter") handleLogin();
+        });
+    });
+
+    document.getElementById("forgotPasswordBtn").onclick = async (e) => {
+        e.preventDefault();
+        const email = document.getElementById("email").value.trim();
+        if (!email) { showError("Enter your email address first."); return; }
+        try {
+            await auth.sendPasswordResetEmail(email);
+            alert("Password reset email sent. Check your inbox.");
+        } catch (err) {
+            showError(friendlyError(err.code));
+        }
+    };
+
+    function friendlyError(code) {
+        const map = {
+            "auth/user-not-found": "No account found with this email.",
+            "auth/wrong-password": "Incorrect password.",
+            "auth/invalid-email": "Invalid email address.",
+            "auth/too-many-requests": "Too many attempts. Please wait and try again.",
+            "auth/user-disabled": "This account has been disabled.",
+            "auth/network-request-failed": "Network error. Check your connection.",
+        };
+        return map[code] || "Authentication failed. Please try again.";
+    }
+</script>
+</body>
+</html>
