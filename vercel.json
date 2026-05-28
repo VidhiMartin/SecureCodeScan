@@ -51,10 +51,10 @@
     }
   ],
   "env": {
-    "FIREBASE_KEY":       "@firebase_key",
-    "FIREBASE_PROJECT_ID":"@firebase_project_id",
-    "FIREBASE_TENANT_ID": "@firebase_tenant_id",
-    "OPENROUTER_API_KEY": "@openrouter_api_key",
-    "SECRET_KEY":         "@secret_key"
-  }
+    "FIREBASE_KEY":       "${FIREBASE_KEY}",
+    "FIREBASE_PROJECT_ID":"${FIREBASE_PROJECT_ID}",
+    "FIREBASE_TENANT_ID": "${FIREBASE_TENANT_ID}",
+    "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}",
+    "SECRET_KEY":         "${SECRET_KEY}"
+}
 }
