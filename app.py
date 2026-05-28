@@ -33,7 +33,7 @@ limiter = Limiter(
 )
 
 # --- Enterprise Policy Constants ---
-TENANT_ID = "Enterprise-Test-avvoo"
+TENANT_ID = "Ent-Test-avvoo"
 MAX_CODE_SIZE = 50_000
 MALICIOUS_PATTERNS = [
     r"os\.system\(",
