@@ -64,7 +64,7 @@ if not firebase_admin._apps:
         else:
             cred = credentials.Certificate(firebase_key)
 
-        firebase_admin.initialize_app(cred, {'projectId': 'code-scanner-91d48'})
+        firebase_admin.initialize_app(cred, {'projectId': 'codescan-b61a0'})
         db = firestore.client()
         logger.info("Firebase & Firestore initialized successfully.")
     except Exception as e:
