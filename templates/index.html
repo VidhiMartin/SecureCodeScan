@@ -1,1 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SECURE CODE SCANNER | Advanced LLM Code Auditor</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
+    
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        .nav-header {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+        .btn-logout {
+            background: rgba(255, 68, 68, 0.1);
+            color: #ff4444;
+            border: 1px solid rgba(255, 68, 68, 0.3);
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .btn-logout:hover {
+            background: #ff4444;
+            color: white;
+            box-shadow: 0 0 15px rgba(255, 68, 68, 0.4);
+        }
+        #result-card { display: none; }
+
+        #auth-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: #0a0a0a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+
+        /* Loading UI */
+        #loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(10, 10, 10, 0.9);
+            backdrop-filter: blur(8px);
+            z-index: 10000;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #00ff88;
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        .loader-container { width: 300px; text-align: center; }
+        .progress-bar-bg {
+            width: 100%; height: 4px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 10px;
+            margin: 20px 0;
+            overflow: hidden;
+        }
+        .progress-bar-fill {
+            width: 0%; height: 100%;
+            background: linear-gradient(90deg, #00ff88, #00bdff);
+            box-shadow: 0 0 15px #00ff88;
+            transition: width 0.5s ease;
+        }
+        .scanning-text {
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Error toast */
+        #error-toast {
+            display: none;
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: rgba(244, 63, 94, 0.15);
+            border: 1px solid #f43f5e;
+            color: #f43f5e;
+            padding: 14px 20px;
+            border-radius: 10px;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 0.85rem;
+            z-index: 99999;
+            max-width: 340px;
+            backdrop-filter: blur(10px);
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Auth gate: shown while verifying token -->
+    <div id="auth-overlay">
+        <i class="fas fa-shield-halved fa-spin" style="color:#00ff88; font-size:3rem;"></i>
+    </div>
+
+    <!-- Scan loading overlay -->
+    <div id="loading-overlay">
+        <div class="loader-container">
+            <i class="fas fa-microchip fa-spin" style="font-size: 3rem; margin-bottom: 20px;"></i>
+            <div class="scanning-text" id="status-text">Analyzing Source Code...</div>
+            <div class="progress-bar-bg">
+                <div class="progress-bar-fill" id="progress-fill"></div>
+            </div>
+            <div style="font-size: 0.7rem; color: #888;">AI Reasoning in Progress via NVIDIA Nemotron</div>
+        </div>
+    </div>
+
+    <!-- Error toast -->
+    <div id="error-toast"></div>
+
+    <div class="nav-header">
+        <button id="logoutBtn" class="btn-logout">
+            <i class="fas fa-power-off"></i> Terminate Session
+        </button>
+    </div>
+
+    <div class="hero">
+        <div class="container">
+            <h1 class="headline">Secure Code Scanner</h1>
+            <div class="floating-shield">
+                <i class="fas fa-shield-halved"></i>
+            </div>
+            <br>
+            <div class="model-badge">
+                <i class="fas fa-microchip"></i> 
+                <span>Powered by NVIDIA Nemotron-3 Super 120B</span>
+            </div>
+            <p class="subhead">
+                Enterprise-grade code security auditing powered by advanced LLM reasoning. 
+                Secure Code Scanner automates vulnerability detection and threat intelligence across 10+ programming languages.
+            </p>
+            
+            <div class="feature-grid">
+                <div class="feature-item">
+                    <i class="fas fa-bug bullet-vuln"></i>
+                    <span><strong>Vulnerability Audit</strong><br>Real-time logic &amp; flaw detection.</span>
+                </div>
+                <div class="feature-item">
+                    <i class="fas fa-database bullet-cve"></i>
+                    <span><strong>Threat Intelligence</strong><br>Global CVE/CWE database referencing.</span>
+                </div>
+                <div class="feature-item">
+                    <i class="fas fa-wrench bullet-patch"></i>
+                    <span><strong>Auto-Remediation</strong><br>Actionable secure-code patching.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="scanner-card">
+            <!-- No <form> submit — using JS fetch directly -->
+            <div id="scanForm">
+                <label for="language"><i class="fas fa-code-branch"></i> Environment Context</label>
+                <select id="language">
+                    <option value="python">Python</option>
+                    <option value="javascript">JavaScript</option>
+                    <option value="typescript">TypeScript</option>
+                    <option value="java">Java</option>
+                    <option value="c">C</option>
+                    <option value="cpp">C++</option>
+                    <option value="csharp">C#</option>
+                    <option value="go">Go</option>
+                    <option value="rust">Rust</option>
+                    <option value="php">PHP</option>
+                    <option value="ruby">Ruby</option>
+                </select>
+
+                <label for="code"><i class="fas fa-terminal"></i> Source Code Input</label>
+                <textarea id="code" rows="14" placeholder="// Paste source code here for auditing..."></textarea>
+
+                <button type="button" id="submitBtn" onclick="handleScan()">
+                    <i class="fas fa-shield-virus"></i> Initialize Security Scan
+                </button>
+            </div>
+        </div>
+
+        <div class="result-card" id="result-card">
+            <div class="result-header">
+                <i class="fas fa-search"></i> Audit Complete: Vulnerability Report
+            </div>
+            <pre><code id="result" class="language-json"></code></pre>
+        </div>
+    </div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+
+<script>
+    // Firebase config — public keys are safe to expose (security enforced server-side + tenant)
+    const firebaseConfig = {
+        apiKey: "AIzaSyD9llGi3Rq4eTgOA4QLI2hGK00v-jx0bCs",
+        authDomain: "code-scanner-91d48.firebaseapp.com",
+        projectId: "code-scanner-91d48"
+    };
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    auth.tenantId = "Enterprise-Test-avvoo";
+
+    // ── Auth Gate ──────────────────────────────────────────
+    auth.onAuthStateChanged(async (user) => {
+        if (!user) {
+            window.location.href = "/login";
+            return;
+        }
+        try {
+            // Refresh token; check_revoked=True on server handles revocation
+            const token = await user.getIdToken(true);
+            localStorage.setItem("token", token);
+            document.getElementById("auth-overlay").style.display = "none";
+        } catch (e) {
+            window.location.href = "/login";
+        }
+    });
+
+    document.getElementById("logoutBtn").onclick = () => {
+        if (confirm("Terminate secure session?")) {
+            auth.signOut().then(() => {
+                localStorage.removeItem("token");
+                window.location.href = "/login";
+            });
+        }
+    };
+
+    // ── Helpers ────────────────────────────────────────────
+    function showError(msg) {
+        const toast = document.getElementById("error-toast");
+        toast.textContent = "⚠ " + msg;
+        toast.style.display = "block";
+        setTimeout(() => { toast.style.display = "none"; }, 6000);
+    }
+
+    let progressInterval = null;
+
+    function startProgress() {
+        const overlay = document.getElementById("loading-overlay");
+        const fill = document.getElementById("progress-fill");
+        const statusText = document.getElementById("status-text");
+        overlay.style.display = "flex";
+        fill.style.width = "0%";
+        statusText.textContent = "Analyzing Source Code...";
+
+        let progress = 0;
+        progressInterval = setInterval(() => {
+            if (progress < 85) {
+                progress += Math.random() * 12;
+                fill.style.width = Math.min(progress, 85) + "%";
+                if (progress > 35) statusText.textContent = "Referencing CVE Databases...";
+                if (progress > 65) statusText.textContent = "Applying Heuristic Analysis...";
+            }
+        }, 700);
+    }
+
+    function finishProgress(callback) {
+        clearInterval(progressInterval);
+        const fill = document.getElementById("progress-fill");
+        const statusText = document.getElementById("status-text");
+        fill.style.width = "100%";
+        statusText.textContent = "Finalizing Report...";
+        setTimeout(() => {
+            document.getElementById("loading-overlay").style.display = "none";
+            callback();
+        }, 450);
+    }
+
+    // ── Scan Handler ───────────────────────────────────────
+    async function handleScan() {
+        const user = auth.currentUser;
+        if (!user) { window.location.href = "/login"; return; }
+
+        const code = document.getElementById("code").value.trim();
+        const language = document.getElementById("language").value;
+        const submitBtn = document.getElementById("submitBtn");
+
+        if (!code) { showError("Please paste source code before scanning."); return; }
+
+        submitBtn.disabled = true;
+        startProgress();
+
+        try {
+            // Always get a fresh token before each request
+            const token = await user.getIdToken(true);
+
+            const formData = new FormData();
+            formData.append("language", language);
+            formData.append("code", code);
+
+            const response = await fetch("/scan", {
+                method: "POST",
+                headers: { "Authorization": "Bearer " + token },
+                body: formData
+            });
+
+            const data = await response.json();
+
+            finishProgress(() => {
+                if (!response.ok) {
+                    showError(data.audit_summary || "Scan failed. Please try again.");
+                } else {
+                    const resultEl = document.getElementById("result");
+                    const resultCard = document.getElementById("result-card");
+                    resultEl.textContent = JSON.stringify(data, null, 2);
+                    Prism.highlightElement(resultEl);
+                    resultCard.style.display = "block";
+                    resultCard.scrollIntoView({ behavior: "smooth" });
+                }
+            });
+
+        } catch (err) {
+            finishProgress(() => {
+                showError("Network error: " + err.message);
+            });
+        } finally {
+            submitBtn.disabled = false;
+        }
+    }
+</script>
+</body>
+</html>
 
