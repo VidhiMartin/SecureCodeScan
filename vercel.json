@@ -11,6 +11,10 @@
   ],
   "routes": [
     {
+      "src": "/static/(.*)",
+      "dest": "/static/$1"
+    },
+    {
       "src": "/(.*)",
       "dest": "app.py"
     }
@@ -56,5 +60,5 @@
     "FIREBASE_TENANT_ID": "${FIREBASE_TENANT_ID}",
     "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}",
     "SECRET_KEY":         "${SECRET_KEY}"
-}
+  }
 }
