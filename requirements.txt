@@ -1,0 +1,7 @@
+flask
+firebase-admin
+pyotp
+qrcode
+pillow
+requests
+flask-limiter
