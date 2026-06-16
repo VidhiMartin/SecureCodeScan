@@ -725,17 +725,21 @@
         });
     });
 
-    document.getElementById("forgotPasswordBtn").onclick = async (e) => {
-        e.preventDefault();
-        const email = document.getElementById("email").value.trim();
-        if (!email) { showError("Enter your email address first."); return; }
-        try {
-            await auth.sendPasswordResetEmail(email);
-            alert("Password reset email sent. Check your inbox.");
-        } catch (err) {
-            showError(friendlyError(err.code));
-        }
-    };
+   document.getElementById("forgotPasswordBtn").onclick = async (e) => {
+    e.preventDefault();
+    const email = document.getElementById("email").value.trim();
+    if (!email) { showError("Enter your email address first."); return; }
+    try {
+        await auth.sendPasswordResetEmail(email, {
+            url: 'https://secure-code-scan.vercel.app/login',   // your login page
+            handleCodeInApp: false,
+            tenantId: auth.tenantId    // "Ent-Test-avvoo-9vpee"
+        });
+        alert("Password reset email sent. Check your inbox.");
+    } catch (err) {
+        showError(friendlyError(err.code));
+    }
+};
 
     function friendlyError(code) {
         const map = {
