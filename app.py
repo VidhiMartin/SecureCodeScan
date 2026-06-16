@@ -51,6 +51,7 @@ MALICIOUS_PATTERNS = [
 COMPILED_PATTERNS = [re.compile(p) for p in MALICIOUS_PATTERNS]
 
 # --- Firebase Admin & Firestore Initialization ---
+# --- Firebase Admin & Firestore Initialization ---
 firebase_key = os.getenv("FIREBASE_KEY")
 db = None
 
@@ -64,11 +65,12 @@ if not firebase_admin._apps:
         else:
             cred = credentials.Certificate(firebase_key)
 
-        firebase_admin.initialize_app(cred, {'projectId': 'codescan-b61a0'})
+        firebase_admin.initialize_app(cred, {'projectId': os.getenv("FIREBASE_PROJECT_ID", "codescan-b61a0")})
         db = firestore.client()
         logger.info("Firebase & Firestore initialized successfully.")
     except Exception as e:
-        logger.error(f"FATAL: Firebase Initialization Failed: {e}")
+        logger.error(f"FATAL: Firebase Initialization Failed: {e}", exc_info=True)
+        # Optionally, you can still raise or just keep db=None
 
 
 # ─────────────────────────────────────────────
