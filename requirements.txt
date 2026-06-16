@@ -1,5 +1,5 @@
 flask
-firebase-admin
+firebase-admin>=6.0.0
 pyotp
 qrcode
 pillow
