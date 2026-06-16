@@ -82,9 +82,7 @@ def get_current_user():
         return None
     try:
         token = auth_header.split(" ", 1)[1]
-        # Pass tenant_id so revocation check finds the user in the correct tenant
         decoded = auth.verify_id_token(token, check_revoked=True, tenant_id=TENANT_ID)
-        # Optional: Double‑check the token’s tenant claim still matches (belt and suspenders)
         if decoded.get("firebase", {}).get("tenant") != TENANT_ID:
             logger.warning("Token tenant mismatch.")
             return None
