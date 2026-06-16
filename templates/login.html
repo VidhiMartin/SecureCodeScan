@@ -731,9 +731,9 @@
     if (!email) { showError("Enter your email address first."); return; }
     try {
         await auth.sendPasswordResetEmail(email, {
-            url: 'https://secure-code-scan.vercel.app/login',   // your login page
+            url: 'https://secure-code-scan.vercel.app/login',  // Exact login page URL
             handleCodeInApp: false,
-            tenantId: auth.tenantId    // "Ent-Test-avvoo-9vpee"
+            tenantId: 'Ent-Test-avvoo-9vpee'  // Hardcode your tenant ID here
         });
         alert("Password reset email sent. Check your inbox.");
     } catch (err) {
