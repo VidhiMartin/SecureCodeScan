@@ -54,12 +54,5 @@
         }
       ]
     }
-  ],
-  "env": {
-    "FIREBASE_KEY":       "${FIREBASE_KEY}",
-    "FIREBASE_PROJECT_ID":"${FIREBASE_PROJECT_ID}",
-    "FIREBASE_TENANT_ID": "${FIREBASE_TENANT_ID}",
-    "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}",
-    "SECRET_KEY":         "${SECRET_KEY}"
-  }
+  ]
 }
