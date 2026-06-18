@@ -75,17 +75,14 @@ def _email_to_doc_id(email: str) -> str:
 # Helper: Auth Guard
 # ─────────────────────────────────────────────
 def get_current_user():
-    """Verify the Firebase ID token, enforce tenant, and check revocation."""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return None
     try:
         token = auth_header.split(" ", 1)[1]
-        # Requires firebase-admin>=6.0.0 – raises ValueError if tenant_id is not supported
-        decoded = auth.verify_id_token(token, check_revoked=True, tenant_id=TENANT_ID)
-        # Optional extra check (already enforced by tenant_id)
+        decoded = auth.verify_id_token(token)
         if decoded.get("firebase", {}).get("tenant") != TENANT_ID:
-            logger.warning("Token tenant mismatch (should not happen).")
+            logger.warning("Token tenant mismatch.")
             return None
         return decoded
     except Exception as e:
