@@ -15,23 +15,24 @@ MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 REQUIRED_KEYS = {"name", "severity", "cwe", "vulnerable_code", "risk", "fix"}
 
 # -------------------------------------------------------------------
-# PRIMARY: Bare JSON array
+# PRIMARY: Wrapper object {"vulnerabilities": [...]} – highly reliable
 # -------------------------------------------------------------------
-_SYSTEM_PROMPT_BARE_ARR = (
+_SYSTEM_PROMPT_WRAPPER = (
     "You are a static analysis security engine.\n"
-    "Find ALL vulnerabilities in the code.\n\n"
-    "Return **only** a JSON array. No markdown, no code blocks, no explanations.\n"
-    "Each element of the array is an object with exactly these keys:\n"
-    '  "cwe"      – CWE number and short name (e.g., "CWE-78: OS Command Injection")\n'
-    '  "severity" – string like "9/10"\n'
+    "Find ALL vulnerabilities in the provided code.\n\n"
+    "Return EXACTLY a JSON object with a single key \"vulnerabilities\", whose value is an array of vulnerability objects.\n"
+    "DO NOT include any other text, markdown, or code blocks.\n\n"
+    "Each vulnerability object must have exactly these keys:\n"
+    '  "cwe"      – e.g., "CWE-78: OS Command Injection"\n'
+    '  "severity" – e.g., "9/10"\n'
     '  "vulnerable_code" – the vulnerable line (keep under 50 chars)\n'
     '  "risk"     – how an attacker would exploit it, max 15 words\n'
     '  "fix"      – one‑line fix, max 20 words\n\n'
-    "Order from most critical to least critical.\n"
-    "If no vulnerabilities exist, return an empty array []."
+    "Order the array by severity, most critical first.\n"
+    "If no vulnerabilities exist, return {\"vulnerabilities\": []}."
 )
 
-_FEW_SHOT_BARE_ARR = [
+_FEW_SHOT_WRAPPER = [
     {
         "user": (
             "Language: python\n\n"
@@ -49,33 +50,36 @@ _FEW_SHOT_BARE_ARR = [
             "    host = request.args.get('host')\n"
             "    os.system(f'ping {host}')\n"
         ),
-        "assistant": json.dumps([
-            {
-                "cwe": "CWE-89: SQL Injection",
-                "severity": "10/10",
-                "vulnerable_code": "db.execute(query)",
-                "risk": "Attacker bypasses login",
-                "fix": "Use parameterised queries"
-            },
-            {
-                "cwe": "CWE-78: OS Command Injection",
-                "severity": "9/10",
-                "vulnerable_code": "os.system(f'ping {host}')",
-                "risk": "Attacker controls host to run commands",
-                "fix": "Use subprocess.run with shell=False"
-            }
-        ])
+        "assistant": json.dumps({
+            "vulnerabilities": [
+                {
+                    "cwe": "CWE-89: SQL Injection",
+                    "severity": "10/10",
+                    "vulnerable_code": "db.execute(query)",
+                    "risk": "Attacker bypasses login",
+                    "fix": "Use parameterised queries"
+                },
+                {
+                    "cwe": "CWE-78: OS Command Injection",
+                    "severity": "9/10",
+                    "vulnerable_code": "os.system(f'ping {host}')",
+                    "risk": "Attacker controls host to run commands",
+                    "fix": "Use subprocess.run with shell=False"
+                }
+            ]
+        })
     }
 ]
 
 # -------------------------------------------------------------------
-# FALLBACK: Pipe‑separated list (faster and now cleaned up)
+# FALLBACK: Pipe‑separated list – now with strict parser fix
 # -------------------------------------------------------------------
 _SYSTEM_PROMPT_PIPE = (
     "List ALL vulnerabilities. For each vulnerability output exactly one line with fields separated by \" | \".\n"
     "Format: CWE-ID: Name | severity/10 | vulnerable code | risk (max 15 words) | fix (max 20 words)\n"
     "Example: CWE-89: SQL Injection | 10/10 | cur.execute(query) | Attacker bypasses login | Use parameterised queries\n\n"
-    "Do NOT include any other text, no dashes, no bullet points. If no vulnerabilities, output the word NONE."
+    "Do NOT include any other text, no dashes, no bullet points. Start immediately with the first vulnerability.\n"
+    "If no vulnerabilities, output just the word NONE."
 )
 
 _FEW_SHOT_PIPE = [
@@ -145,8 +149,19 @@ _FEW_SHOT_SINGLE = [
 # -------------------------------------------------------------------
 # Helpers
 # -------------------------------------------------------------------
+def _extract_vulnerabilities_from_wrapper(raw: str) -> List[Dict]:
+    """Extract the list from a {"vulnerabilities": [...]} object, ignoring any extra text."""
+    raw = re.sub(r'```(?:json)?\s*|\s*```', '', raw).strip()
+    # Find the first JSON object
+    match = re.search(r'\{.*\}', raw, re.DOTALL)
+    if not match:
+        raise ValueError("No JSON object found")
+    obj = json.loads(match.group(0))
+    if "vulnerabilities" not in obj or not isinstance(obj["vulnerabilities"], list):
+        raise ValueError("Object does not contain a 'vulnerabilities' array")
+    return obj["vulnerabilities"]
+
 def _extract_json_array(raw: str) -> List[Dict]:
-    """Extract a JSON array from text, ignoring surrounding noise."""
     raw = re.sub(r'```(?:json)?\s*|\s*```', '', raw).strip()
     try:
         parsed = json.loads(raw)
@@ -166,23 +181,25 @@ def _extract_json_array(raw: str) -> List[Dict]:
     raise ValueError("No JSON array found")
 
 def _parse_pipe_list(raw: str) -> List[Dict]:
-    """Parse pipe‑separated lines, skipping instruction echoes and cleaning bullet marks."""
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
     if lines and lines[0].upper() == "NONE":
         return []
     vulns = []
     for line in lines:
-        # Skip lines that are obviously instructions or echoes of the format description
+        # Ignore lines that are obviously instructions or format echoes
         lower = line.lower()
-        if any(lower.startswith(skip) for skip in (
-            "we need", "list all", "output", "return", "example", "do not",
-            "now format", "format:", "cwe-id:", "cwe:", "severity/10", "code:", "risk:", "fix:"
-        )):
+        if any(phrase in lower for phrase in [
+            "we need", "list all", "output each line", "now we", "format:",
+            "cwe-id:", "severity/10", "vulnerable code", "risk (max", "fix (max",
+            "do not", "return", "example"
+        ]):
+            continue
+        # Also skip if the line doesn't start with "CWE-" (a real vulnerability starts with that)
+        if not re.match(r'^CWE-\d+:', line):
             continue
         parts = [p.strip() for p in line.split("|")]
         if len(parts) == 5 and "/" in parts[1]:
             cwe_name, severity, code, risk, fix = parts
-            # Remove leading dash/asterisk/bullet from the name
             cwe_name = re.sub(r'^[\-\*\•\s]+', '', cwe_name).strip()
             vulns.append({
                 "name": cwe_name,
@@ -253,21 +270,21 @@ def analyze_code(code: str, language: str) -> Dict[str, Any]:
         }
 
     sanitized = code.replace("<", "&lt;").replace(">", "&gt;")
-    user_prompt = f"Language: {language}\n\nCode:\n{sanitized}\n\nList all vulnerabilities."
+    user_prompt = f"Language: {language}\n\nCode:\n{sanitized}\n\nReturn the vulnerabilities as instructed."
 
-    # ---- Strategy 1: Bare JSON array ----
+    # ---- Strategy 1: Wrapper object (most reliable, gives all vulns) ----
     try:
-        raw = _run_llm(_SYSTEM_PROMPT_BARE_ARR, _FEW_SHOT_BARE_ARR, user_prompt, 4096, 90)
-        vulns = _extract_json_array(raw)
+        raw = _run_llm(_SYSTEM_PROMPT_WRAPPER, _FEW_SHOT_WRAPPER, user_prompt, 4096, 90)
+        vulns = _extract_vulnerabilities_from_wrapper(raw)
         vulns = [_validate_vuln(v) for v in vulns]
         if vulns:
             return {"status": "success", "vulnerabilities": vulns, "most_critical": vulns[0]}
         else:
             return {"status": "success", "vulnerabilities": [], "most_critical": _most_critical([])}
     except Exception as e:
-        logger.warning(f"Bare array failed: {e}")
+        logger.warning(f"Wrapper object failed: {e}")
 
-    # ---- Strategy 2: Pipe‑separated list ----
+    # ---- Strategy 2: Pipe list (with fixed parser) ----
     try:
         raw = _run_llm(_SYSTEM_PROMPT_PIPE, _FEW_SHOT_PIPE, user_prompt, 4096, 60)
         vulns = _parse_pipe_list(raw)
