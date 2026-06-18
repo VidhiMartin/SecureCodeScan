@@ -725,19 +725,19 @@
         });
     });
 
-   document.getElementById("forgotPasswordBtn").onclick = async (e) => {
+  document.getElementById("forgotPasswordBtn").onclick = async (e) => {
     e.preventDefault();
     const email = document.getElementById("email").value.trim();
     if (!email) { showError("Enter your email address first."); return; }
     try {
         await auth.sendPasswordResetEmail(email, {
-            url: 'https://secure-code-scan.vercel.app/login',
+            url: 'https://secure-code-scan.vercel.app/reset-password',  // Point to YOUR page
             handleCodeInApp: false,
             tenantId: 'Ent-Test-avvoo-9vpee'
         });
         alert("Password reset email sent. Check your inbox.");
     } catch (err) {
-        console.error("Password reset error:", err.code, err.message);  // Add this line
+        console.error("Password reset error:", err.code, err.message);
         showError(friendlyError(err.code));
     }
 };
