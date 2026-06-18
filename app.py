@@ -281,17 +281,34 @@ def scan(user):
                 "audit_summary": msg
             }), 422
 
+        # Call the new analyze_code that returns {status, vulnerabilities, most_critical}
         result = analyze_code(code, language)
 
-        if not result or not isinstance(result, dict):
+        # Handle errors from the analysis engine
+        if result.get("status") == "error":
             return jsonify({
                 "status": "FAULT",
-                "error_code": "ENGINE_TIMEOUT",
-                "audit_summary": "Security engine returned no data. Please retry."
+                "error_code": result.get("error_code", "UNKNOWN"),
+                "audit_summary": result["most_critical"].get("details", "Scan failed.")
             }), 502
 
+        # If no vulnerabilities found
+        if not result.get("vulnerabilities"):
+            return jsonify({
+                "name": "No issues found",
+                "severity": "N/A",
+                "cwe": "N/A",
+                "vulnerable_code": "N/A",
+                "risk": "No security issues detected.",
+                "fix": "N/A"
+            })
+
+        # Return the list of vulnerabilities to the frontend
         logger.info(f"Scan completed for uid={user.get('uid', 'unknown')} lang={language}")
-        return jsonify(result)
+        return jsonify({
+            "vulnerabilities": result["vulnerabilities"],
+            "total": len(result["vulnerabilities"])
+        })
 
     except Exception as e:
         logger.error(f"CRITICAL ROUTE FAULT: {e}", exc_info=True)
