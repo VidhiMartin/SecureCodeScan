@@ -15,6 +15,7 @@ from flask_limiter.util import get_remote_address
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
 from utils import analyze_code
+logger.info(f"firebase-admin version: {firebase_admin.__version__}")
 
 # --- Security Configuration & Logging ---
 logging.basicConfig(level=logging.INFO)
