@@ -120,10 +120,11 @@ def validate_email(email: str) -> bool:
 def validate_language_match(code: str, lang: str):
     code_lower = code.lower()
     if lang == "python":
-        if any(kw in code_lower for kw in ["const ", "let ", "console.log"]):
+        # Only match standalone "const" or "let" keywords, plus "console.log"
+        if re.search(r'\bconst\b', code_lower) or re.search(r'\blet\b', code_lower) or "console.log" in code_lower:
             return False, "Snippet appears to be JavaScript/TypeScript, but environment is Python."
     if lang in ("javascript", "typescript"):
-        if "def " in code_lower and ":" in code_lower:
+        if re.search(r'\bdef\b', code_lower) and ":" in code_lower:
             return False, "Snippet appears to be Python, but environment is set to JavaScript/TypeScript."
     return True, ""
 
