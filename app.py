@@ -2,12 +2,11 @@ import os
 import json
 import re
 import logging
+import hashlib
 import pyotp
 import qrcode
 import io
 import base64
-import hashlib
-import hmac
 import time
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, redirect, abort
@@ -22,6 +21,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+# Set a secret key for Flask (required for sessions, flash, etc.)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', os.urandom(24).hex())  # ALWAYS set in production env
 app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1MB request cap
 
 # Enterprise Rate Limiter
@@ -29,28 +31,13 @@ limiter = Limiter(
     key_func=get_remote_address,
     app=app,
     default_limits=["100 per hour"],
-    storage_uri="memory://"
+    storage_uri="memory://"   # For production, replace with Redis or Vercel KV
 )
 
 # --- Enterprise Policy Constants ---
-TENANT_ID = "Ent-Test-avvoo-9vpee"
+TENANT_ID = os.getenv("FIREBASE_TENANT_ID", "Ent-Test-avvoo-9vpee")
 MAX_CODE_SIZE = 50_000
-MALICIOUS_PATTERNS = [
-    r"os\.system\(",
-    r"subprocess\.",
-    r"eval\(",
-    r"exec\(",
-    r"socket\.",
-    r"__import__",
-    r"getattr\(",
-    r"chmod",
-    r"rm -rf",
-]
 
-# Compiled for performance
-COMPILED_PATTERNS = [re.compile(p) for p in MALICIOUS_PATTERNS]
-
-# --- Firebase Admin & Firestore Initialization ---
 # --- Firebase Admin & Firestore Initialization ---
 firebase_key = os.getenv("FIREBASE_KEY")
 db = None
@@ -63,36 +50,46 @@ if not firebase_admin._apps:
                 cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
             cred = credentials.Certificate(cred_dict)
         else:
+            # Fallback: treat FIREBASE_KEY as a file path (not recommended)
             cred = credentials.Certificate(firebase_key)
 
-        firebase_admin.initialize_app(cred, {'projectId': os.getenv("FIREBASE_PROJECT_ID", "codescan-b61a0")})
+        firebase_admin.initialize_app(cred, {
+            'projectId': os.getenv("FIREBASE_PROJECT_ID", "codescan-b61a0")
+        })
         db = firestore.client()
         logger.info("Firebase & Firestore initialized successfully.")
     except Exception as e:
         logger.error(f"FATAL: Firebase Initialization Failed: {e}", exc_info=True)
-        # Optionally, you can still raise or just keep db=None
+        # In production you might want to exit(1) – here we continue with db=None
+        # so that the app can still serve error responses.
 
+# ─────────────────────────────────────────────
+# Helper: Email → safe Firestore document ID
+# ─────────────────────────────────────────────
+def _email_to_doc_id(email: str) -> str:
+    """Convert an email to a Firestore-safe document ID using SHA‑256."""
+    return hashlib.sha256(email.lower().encode()).hexdigest()
 
 # ─────────────────────────────────────────────
 # Helper: Auth Guard
 # ─────────────────────────────────────────────
 def get_current_user():
+    """Verify the Firebase ID token, enforce tenant, and check revocation."""
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         return None
     try:
         token = auth_header.split(" ", 1)[1]
-        # Verify the token (no tenant_id or check_revoked, works with older SDKs)
-        decoded = auth.verify_id_token(token)
-        # Manually check that the token's tenant matches
+        # Requires firebase-admin>=6.0.0 – raises ValueError if tenant_id is not supported
+        decoded = auth.verify_id_token(token, check_revoked=True, tenant_id=TENANT_ID)
+        # Optional extra check (already enforced by tenant_id)
         if decoded.get("firebase", {}).get("tenant") != TENANT_ID:
-            logger.warning("Token tenant mismatch.")
+            logger.warning("Token tenant mismatch (should not happen).")
             return None
         return decoded
     except Exception as e:
         logger.warning(f"Token verification failed: {e}")
         return None
-
 
 def require_auth(f):
     """Decorator: Reject requests without a valid Firebase token."""
@@ -108,7 +105,6 @@ def require_auth(f):
         return f(*args, user=user, **kwargs)
     return decorated
 
-
 # ─────────────────────────────────────────────
 # Helper: Input Validation
 # ─────────────────────────────────────────────
@@ -120,7 +116,7 @@ def validate_email(email: str) -> bool:
 def validate_language_match(code: str, lang: str):
     code_lower = code.lower()
     if lang == "python":
-        # Only match standalone "const" or "let" keywords, plus "console.log"
+        # Word boundaries prevent false positives like "reconst", "letter"
         if re.search(r'\bconst\b', code_lower) or re.search(r'\blet\b', code_lower) or "console.log" in code_lower:
             return False, "Snippet appears to be JavaScript/TypeScript, but environment is Python."
     if lang in ("javascript", "typescript"):
@@ -128,28 +124,27 @@ def validate_language_match(code: str, lang: str):
             return False, "Snippet appears to be Python, but environment is set to JavaScript/TypeScript."
     return True, ""
 
-
 # ─────────────────────────────────────────────
-# MFA Routes
+# MFA Routes (Now with hashed email doc IDs)
 # ─────────────────────────────────────────────
 
 @app.route('/mfa/setup', methods=['POST'])
-@limiter.limit("5 per hour")  # Prevent secret enumeration
+@limiter.limit("5 per hour")
 def mfa_setup():
     if not db:
         return jsonify({"error": "Database unavailable"}), 503
 
     data = request.get_json(silent=True) or {}
     email = data.get("email", "").strip().lower()
-
     if not validate_email(email):
         return jsonify({"error": "Invalid email"}), 400
 
     try:
         secret = pyotp.random_base32()
+        doc_id = _email_to_doc_id(email)
 
-        # Store secret; MFA is NOT enabled until verified
-        db.collection("users").document(email).set({
+        db.collection("users").document(doc_id).set({
+            "email": email,
             "mfa_secret": secret,
             "mfa_enabled": False,
             "setup_timestamp": int(time.time())
@@ -157,21 +152,18 @@ def mfa_setup():
 
         totp = pyotp.TOTP(secret)
         provisioning_uri = totp.provisioning_uri(name=email, issuer_name="SecureCodeScanner")
-
         img = qrcode.make(provisioning_uri)
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         qr_b64 = base64.b64encode(buf.getvalue()).decode()
 
         return jsonify({"qr_code": qr_b64})
-
     except Exception as e:
-        logger.error(f"MFA Setup Error: {e}")
+        logger.error(f"MFA Setup Error: {e}", exc_info=True)
         return jsonify({"error": "MFA provisioning failed"}), 500
 
-
 @app.route('/mfa/verify', methods=['POST'])
-@limiter.limit("10 per minute")  # Brute-force protection
+@limiter.limit("10 per minute")
 def mfa_verify():
     if not db:
         return jsonify({"success": False, "message": "Database unavailable"}), 503
@@ -182,15 +174,13 @@ def mfa_verify():
 
     if not validate_email(email):
         return jsonify({"success": False, "message": "Invalid email"}), 400
-
-    # Validate code is exactly 6 digits
     if not re.fullmatch(r'\d{6}', code):
         return jsonify({"success": False, "message": "Code must be 6 digits"}), 400
 
     try:
-        user_doc = db.collection("users").document(email).get()
+        doc_id = _email_to_doc_id(email)
+        user_doc = db.collection("users").document(doc_id).get()
         if not user_doc.exists:
-            # Don't reveal whether email exists
             return jsonify({"success": False, "message": "Invalid code"}), 401
 
         user_data = user_doc.to_dict()
@@ -199,40 +189,34 @@ def mfa_verify():
             return jsonify({"success": False, "message": "MFA not configured"}), 400
 
         totp = pyotp.TOTP(secret)
-        # valid_window=1 allows ±30s clock drift
         if totp.verify(code, valid_window=1):
-            db.collection("users").document(email).update({"mfa_enabled": True})
+            db.collection("users").document(doc_id).update({"mfa_enabled": True})
             return jsonify({"success": True})
 
         return jsonify({"success": False, "message": "Invalid security code"}), 401
-
     except Exception as e:
-        logger.error(f"MFA Verify Error: {e}")
+        logger.error(f"MFA Verify Error: {e}", exc_info=True)
         return jsonify({"success": False, "message": "Verification error"}), 500
-
 
 @app.route('/mfa/status', methods=['POST'])
 @limiter.limit("20 per minute")
 def mfa_status():
-    """Returns MFA status without revealing whether the account exists."""
     if not db:
         return jsonify({"enabled": False})
 
     data = request.get_json(silent=True) or {}
     email = data.get("email", "").strip().lower()
-
     if not validate_email(email):
         return jsonify({"enabled": False})
 
     try:
-        user_doc = db.collection("users").document(email).get()
+        doc_id = _email_to_doc_id(email)
+        user_doc = db.collection("users").document(doc_id).get()
         if user_doc.exists and user_doc.to_dict().get("mfa_enabled"):
             return jsonify({"enabled": True})
     except Exception:
         pass
-
     return jsonify({"enabled": False})
-
 
 # ─────────────────────────────────────────────
 # Standard Routes
@@ -242,16 +226,13 @@ def mfa_status():
 def home():
     return redirect("/scanner")
 
-
 @app.route("/scanner")
 def scanner():
     return render_template("index.html")
 
-
 @app.route("/login")
 def login_page():
     return render_template("login.html")
-
 
 @app.route("/signup")
 def signup_page():
@@ -261,7 +242,6 @@ def signup_page():
 def reset_password_page():
     return render_template("reset-password.html")
 
-
 @app.route("/scan", methods=["POST"])
 @limiter.limit("10 per minute")
 @require_auth
@@ -270,7 +250,6 @@ def scan(user):
         language = request.form.get("language", "").strip().lower()
         code = request.form.get("code", "")
 
-        # Allowed languages whitelist
         ALLOWED_LANGUAGES = {
             "python", "javascript", "typescript", "java",
             "c", "cpp", "csharp", "go", "rust", "php", "ruby"
@@ -304,7 +283,6 @@ def scan(user):
                 "audit_summary": msg
             }), 422
 
-        # Perform scan
         result = analyze_code(code, language)
 
         if not result or not isinstance(result, dict):
@@ -314,19 +292,16 @@ def scan(user):
                 "audit_summary": "Security engine returned no data. Please retry."
             }), 502
 
-        # Log scan for audit trail (uid, not email)
         logger.info(f"Scan completed for uid={user.get('uid', 'unknown')} lang={language}")
-
         return jsonify(result)
 
     except Exception as e:
-        logger.error(f"CRITICAL ROUTE FAULT: {e}")
+        logger.error(f"CRITICAL ROUTE FAULT: {e}", exc_info=True)
         return jsonify({
             "status": "FAULT",
             "error_code": "SERVER_INTERNAL_ERROR",
             "audit_summary": "Internal logic error."
         }), 500
-
 
 # ─────────────────────────────────────────────
 # Error Handlers
@@ -348,7 +323,5 @@ def rate_limited(e):
         "audit_summary": "Too many requests. Please wait before retrying."
     }), 429
 
-
 if __name__ == "__main__":
-    # Never run with debug=True in production
     app.run(debug=False, port=5000)
