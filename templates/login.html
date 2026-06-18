@@ -732,7 +732,7 @@
     try {
         await auth.sendPasswordResetEmail(email, {
             url: 'https://secure-code-scan.vercel.app/reset-password',  // Point to YOUR page
-            handleCodeInApp: false,
+            handleCodeInApp: true,
             tenantId: 'Ent-Test-avvoo-9vpee'
         });
         alert("Password reset email sent. Check your inbox.");
