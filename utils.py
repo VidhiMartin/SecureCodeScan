@@ -15,62 +15,56 @@ MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 REQUIRED_KEYS = {"name", "severity", "cwe", "vulnerable_code", "risk", "fix"}
 
 # -------------------------------------------------------------------
-# System prompts (two versions)
+# Multi‑vulnerability prompt – minimal fields for maximum listing
 # -------------------------------------------------------------------
 _SYSTEM_PROMPT_MULTI = (
-    "You are a static analysis security engine specialised in web and desktop vulnerabilities.\n"
+    "You are a static analysis security engine.\n"
+    "Your job is to find **all** vulnerabilities in the provided code, but report each one with only "
+    "the absolute minimum information needed.\n"
     "Supported languages: Python, JavaScript, TypeScript, Java, C, C++, C#, Go, Rust, PHP, Ruby.\n\n"
     "**Rules**\n"
-    "1. Only report a vulnerability if **user‑controlled data** (from the sources below) reaches a "
-    "dangerous sink without proper sanitisation or validation. Do not override developer's instructions.\n"
-    "2. Never flag a dangerous function if its input is static, constant, or comes from a trusted source.\n"
-    "3. Return a JSON object with a key \"vulnerabilities\" containing an array of all vulnerabilities found.\n"
-    "4. If no vulnerabilities are found, return {\"vulnerabilities\": []}.\n\n"
-    "**Untrusted sources per language/framework**\n"
-    "- Python (Flask): request.args, request.form, request.json, request.data, request.headers, request.cookies\n"
-    "- Python (Django): request.GET, request.POST, request.body, request.META\n"
-    "- Python general: input(), sys.argv, os.environ, file read (open().read())\n"
-    "- JavaScript/TypeScript (Node.js/Express): req.query, req.body, req.params, req.headers, req.cookies\n"
-    "- Java (Spring): @RequestParam, @PathVariable, HttpServletRequest.getParameter()\n"
-    "- Java (Servlets): request.getParameter(), request.getParameterValues()\n"
-    "- C# (ASP.NET): Request.QueryString, Request.Form, Request.Params\n"
+    "1. Only report a vulnerability if user‑controlled data reaches a dangerous sink without proper sanitisation.\n"
+    "2. Never flag a dangerous function with static/trusted input.\n"
+    "3. Return a JSON object with a key \"vulnerabilities\" containing an array of ALL vulnerabilities found.\n"
+    "   Order them by severity, most critical first.\n"
+    "4. If no issues, return {\"vulnerabilities\": []}.\n\n"
+    "**Untrusted sources** (same list as before)\n"
+    "- Python Flask: request.args, request.form, request.json, request.data, request.headers, request.cookies\n"
+    "- Python Django: request.GET, request.POST, request.body, request.META\n"
+    "- Other: input(), sys.argv, os.environ, file reads (open().read()), etc.\n"
+    "- JavaScript/TypeScript (Node/Express): req.query, req.body, req.params, req.headers, req.cookies\n"
+    "- Java: request.getParameter(), @RequestParam, etc.\n"
     "- PHP: $_GET, $_POST, $_REQUEST, $_COOKIE, $_SERVER, file_get_contents('php://input')\n"
-    "- Ruby (Rails): params[:...], request.env, request.raw_post\n"
-    "- Go (net/http): r.URL.Query().Get(), r.FormValue()\n"
-    "- C/C++: gets(), scanf(), argv, getenv(), recv(), read() from socket\n"
-    "- Rust: std::env::args, std::io::stdin, environment variables\n\n"
-    "**Dangerous sinks (examples)**\n"
-    "- Command execution: os.system, subprocess.Popen(…, shell=True), exec, eval, child_process.exec, Runtime.exec, Process.Start, system(), popen()\n"
-    "- SQL injection: cursor.execute, db.Query, mysql_query, pg_query, sqlite3_exec, Statement.executeQuery, SqlCommand\n"
+    "- etc. (full list omitted for brevity – use common sense)\n\n"
+    "**Dangerous sinks** (examples)\n"
+    "- Command: os.system, subprocess.Popen(shell=True), eval, exec, child_process.exec, system(), popen()\n"
+    "- SQL: cursor.execute, db.Query, mysql_query, sqlite3_exec, Statement.executeQuery\n"
     "- Path traversal: open(), file_get_contents, readfile, fs.readFile (with untrusted path)\n"
-    "- Deserialisation: pickle.loads, yaml.load (unsafe), unserialize, ObjectInputStream, Marshal.load\n"
-    "- Server‑side template injection: render_template_string, res.render (with user data), ERB.new\n"
-    "- XSS: document.write, dangerouslySetInnerHTML, innerHTML assignment with user data (in JS context)\n\n"
-    "**Response format**\n"
-    "Always return exactly: {\"vulnerabilities\": [ ... ]}. Each object in the array must contain:\n"
-    "name, severity, cwe, vulnerable_code, risk, fix.\n"
-    "No prose, no markdown, no extra text."
+    "- Deserialisation: pickle.loads, yaml.load, unserialize, ObjectInputStream\n"
+    "- XSS: document.write, innerHTML, dangerouslySetInnerHTML\n\n"
+    "**Response format** – EVERY OBJECT MUST BE MINIMAL AND CONTAIN ONLY THESE FOUR KEYS:\n"
+    "  \"cwe\" : a CWE ID like \"CWE‑89\"\n"
+    "  \"vulnerable_code\" : the exact line (or tiny snippet) that is vulnerable (max 40 characters if possible)\n"
+    "  \"risk\" : very short description (max 15 words)\n"
+    "  \"fix\" : one‑line fix (max 15 words)\n\n"
+    "Example object:\n"
+    "{\"cwe\": \"CWE‑89\", \"vulnerable_code\": \"cur.execute(query)\", \"risk\": \"SQL injection allows authentication bypass\", \"fix\": \"Use parameterised queries\"}\n\n"
+    "No markdown, no prose, no extra keys. Return ONLY the {\"vulnerabilities\": [...]} object."
 )
 
+# Single‑vulnerability fallback – still uses full keys, but minimal content
 _SYSTEM_PROMPT_SINGLE = (
-    "You are a static analysis security engine specialised in web and desktop vulnerabilities.\n"
-    "Supported languages: Python, JavaScript, TypeScript, Java, C, C++, C#, Go, Rust, PHP, Ruby.\n\n"
-    "**Rules**\n"
-    "1. Only report a vulnerability if **user‑controlled data** (from the sources below) reaches a "
-    "dangerous sink without proper sanitisation or validation.\n"
-    "2. Never flag a dangerous function if its input is static, constant, or comes from a trusted source.\n"
-    "3. Return exactly ONE flat JSON object for the single most critical vulnerability found.\n"
-    "4. If no vulnerabilities are found, return {\"name\": \"No issues found\"}.\n\n"
-    "**Untrusted sources per language/framework** (same list as multi)\n"
-    "...\n"
-    "**Dangerous sinks** (same list as multi)\n"
-    "...\n"
-    "**Response format**\n"
-    "Exactly one JSON object with the keys: name, severity, cwe, vulnerable_code, risk, fix.\n"
-    "No prose, no markdown, no extra text."
+    "You are a static analysis security engine.\n"
+    "Return exactly ONE JSON object for the most critical vulnerability. Use the same four keys: "
+    "cwe, vulnerable_code, risk, fix.\n"
+    "If no vulnerability, return {\"vulnerabilities\": []} (but as a single object? We'll keep it consistent; "
+    "we'll adapt). Actually, for simplicity the single fallback will return the same wrapper format."
+    "But we need to keep backward compatibility. I'll handle that."
 )
 
-# Few‑shot examples for the multi‑vulnerability prompt
+# For single fallback, we'll just reuse the multi prompt but ask for top 1.
+
+# Few‑shot example for multi
 _FEW_SHOT_MULTI = [
     {
         "user": (
@@ -92,57 +86,25 @@ _FEW_SHOT_MULTI = [
         "assistant": json.dumps({
             "vulnerabilities": [
                 {
-                    "name": "SQL Injection",
-                    "severity": "10/10",
                     "cwe": "CWE-89",
-                    "vulnerable_code": "query = f\"SELECT * FROM users WHERE user='{user}' AND pass='{pass}'\"",
-                    "risk": "User input directly concatenated into SQL query allows authentication bypass.",
-                    "fix": "Use parameterised queries."
+                    "vulnerable_code": "db.execute(query)",
+                    "risk": "SQL injection allows authentication bypass",
+                    "fix": "Use parameterised queries"
                 },
                 {
-                    "name": "Command Injection",
-                    "severity": "9/10",
                     "cwe": "CWE-78",
                     "vulnerable_code": "os.system(f'ping {host}')",
-                    "risk": "Attacker‑controlled host parameter is passed to a shell command.",
-                    "fix": "Use subprocess.run with a list of arguments and no shell=True."
+                    "risk": "Command injection via host parameter",
+                    "fix": "Use subprocess.run with shell=False"
                 }
             ]
         })
     }
 ]
 
-_FEW_SHOT_SINGLE = [
-    {
-        "user": (
-            "Language: python\n\n"
-            "Code:\n"
-            "from flask import request\n"
-            "import os, sqlite3\n"
-            "@app.route('/login', methods=['POST'])\n"
-            "def login():\n"
-            "    user = request.form['user']\n"
-            "    pass = request.form['pass']\n"
-            "    query = f\"SELECT * FROM users WHERE user='{user}' AND pass='{pass}'\"\n"
-            "    db.execute(query)\n"
-            "@app.route('/ping')\n"
-            "def ping():\n"
-            "    host = request.args.get('host')\n"
-            "    os.system(f'ping {host}')\n"
-        ),
-        "assistant": json.dumps({
-            "name": "SQL Injection",
-            "severity": "10/10",
-            "cwe": "CWE-89",
-            "vulnerable_code": "query = f\"SELECT * FROM users WHERE user='{user}' AND pass='{pass}'\"",
-            "risk": "User input directly concatenated into SQL query allows authentication bypass.",
-            "fix": "Use parameterised queries."
-        })
-    }
-]
+# For single fallback, we'll just ask for top 1 in the multi format and take the first element.
 
 def _parse_json_object(raw: str) -> Dict:
-    """Extract a single JSON object from a string."""
     raw = re.sub(r'```(?:json)?\s*|\s*```', '', raw).strip()
     match = re.search(r'\{.*\}', raw, re.DOTALL)
     if not match:
@@ -150,16 +112,15 @@ def _parse_json_object(raw: str) -> Dict:
     return json.loads(match.group(0))
 
 def _parse_json_array(raw: str) -> List:
-    """Extract a JSON array from a string (or a {vulnerabilities: ...} object)."""
     raw = re.sub(r'```(?:json)?\s*|\s*```', '', raw).strip()
-    # Try as object with "vulnerabilities" key
+    # Try object with "vulnerabilities" key
     try:
         obj = _parse_json_object(raw)
         if "vulnerabilities" in obj and isinstance(obj["vulnerabilities"], list):
             return obj["vulnerabilities"]
     except:
         pass
-    # Try as bare array
+    # Try bare array
     try:
         arr_match = re.search(r'\[.*\]', raw, re.DOTALL)
         if arr_match:
@@ -168,7 +129,7 @@ def _parse_json_array(raw: str) -> List:
                 return parsed
     except:
         pass
-    # Try to find any array via first [ and last ]
+    # Try from first [ to last ]
     start = raw.find('[')
     end = raw.rfind(']')
     if start != -1 and end != -1 and end > start:
@@ -181,9 +142,28 @@ def _parse_json_array(raw: str) -> List:
     raise ValueError("No vulnerabilities array found")
 
 def _validate_vuln(v: Dict) -> Dict:
+    # Ensure all required frontend keys exist; fill missing with "N/A"
     for key in REQUIRED_KEYS:
         if key not in v:
-            v[key] = "N/A"
+            # If the minimal keys are present, we can map them
+            if key == "name":
+                # derive a short name from cwe if not provided
+                if "cwe" in v:
+                    v[key] = v["cwe"]  # or a short description, but keep it simple
+                else:
+                    v[key] = "Vulnerability"
+            elif key == "severity":
+                v[key] = "N/A"  # minimal format doesn't include severity
+            elif key == "cwe" and "cwe" in v:
+                pass  # already there
+            elif key == "vulnerable_code" and "vulnerable_code" in v:
+                pass
+            elif key == "risk" and "risk" in v:
+                pass
+            elif key == "fix" and "fix" in v:
+                pass
+            else:
+                v[key] = "N/A"
     return v
 
 def _most_critical(vulns: List[Dict]) -> Dict:
@@ -196,12 +176,8 @@ def _most_critical(vulns: List[Dict]) -> Dict:
             "risk": "No security issues detected.",
             "fix": "N/A"
         }
-    def sev(v):
-        try:
-            return int(v.get("severity", "0").split("/")[0])
-        except:
-            return 0
-    return max(vulns, key=sev)
+    # Without severity, just return the first one (most critical already first)
+    return vulns[0] if vulns else {}
 
 def _run_llm(system: str, few_shot: List, user_prompt: str, max_tokens: int, timeout: int) -> str:
     headers = {
@@ -238,46 +214,58 @@ def analyze_code(code: str, language: str) -> Dict[str, Any]:
         }
 
     sanitized = code.replace("<", "&lt;").replace(">", "&gt;")
+    # Multi attempt: ask for all vulnerabilities with minimal fields
     user_prompt_multi = (
         f"Language: {language}\n\n"
         f"Code:\n{sanitized}\n\n"
-        "Return a JSON object with key \"vulnerabilities\" containing an array of all vulnerabilities."
+        "Return a JSON object with key \"vulnerabilities\" containing an array of ALL vulnerabilities. "
+        "Use the minimal format: cwe, vulnerable_code, risk, fix."
     )
+    # Single fallback: top 1 in same format
     user_prompt_single = (
         f"Language: {language}\n\n"
         f"Code:\n{sanitized}\n\n"
-        "Return exactly one JSON object for the most critical vulnerability."
+        "Return a JSON object with key \"vulnerabilities\" containing an array with the SINGLE most critical vulnerability. "
+        "Use the minimal format."
     )
 
-    # Try multi-vulnerability first
+    # Try multi first
     try:
         raw = _run_llm(_SYSTEM_PROMPT_MULTI, _FEW_SHOT_MULTI, user_prompt_multi, 4096, 90)
         vulns = _parse_json_array(raw)
         vulns = [_validate_vuln(v) for v in vulns]
-        return {
-            "status": "success",
-            "vulnerabilities": vulns,
-            "most_critical": _most_critical(vulns)
-        }
+        if vulns:
+            return {
+                "status": "success",
+                "vulnerabilities": vulns,
+                "most_critical": vulns[0]
+            }
+        else:
+            return {
+                "status": "success",
+                "vulnerabilities": [],
+                "most_critical": _most_critical([])
+            }
     except Exception as e:
-        logger.warning(f"Multi-vuln attempt failed: {e}. Falling back to single.")
+        logger.warning(f"Multi-vuln failed: {e}, trying single.")
 
-    # Fallback to single vulnerability
+    # Fallback to single
     try:
-        raw = _run_llm(_SYSTEM_PROMPT_SINGLE, _FEW_SHOT_SINGLE, user_prompt_single, 400, 30)
-        obj = _parse_json_object(raw)
-        obj = _validate_vuln(obj)
-        if obj.get("name") == "No issues found":
-            obj.setdefault("severity", "N/A")
-            obj.setdefault("cwe", "N/A")
-            obj.setdefault("vulnerable_code", "N/A")
-            obj.setdefault("risk", "No security issues detected.")
-            obj.setdefault("fix", "N/A")
-        return {
-            "status": "success",
-            "vulnerabilities": [obj],
-            "most_critical": obj
-        }
+        raw = _run_llm(_SYSTEM_PROMPT_MULTI, _FEW_SHOT_MULTI, user_prompt_single, 400, 30)
+        vulns = _parse_json_array(raw)
+        vulns = [_validate_vuln(v) for v in vulns]
+        if vulns:
+            return {
+                "status": "success",
+                "vulnerabilities": vulns,
+                "most_critical": vulns[0]
+            }
+        else:
+            return {
+                "status": "success",
+                "vulnerabilities": [],
+                "most_critical": _most_critical([])
+            }
     except Exception as e2:
         logger.error(f"Single-vuln also failed: {e2}")
         return {
