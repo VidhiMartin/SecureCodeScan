@@ -15,24 +15,70 @@ MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 REQUIRED_KEYS = {"name", "severity", "cwe", "vulnerable_code", "risk", "fix"}
 
 # -------------------------------------------------------------------
-# PRIMARY: Pipe‑separated list (extremely reliable, allows many vulns)
+# PRIMARY: Bare JSON array – the model only writes the array, no wrapper
 # -------------------------------------------------------------------
-_SYSTEM_PROMPT_MULTI = (
+_SYSTEM_PROMPT_BARE_ARR = (
     "You are a static analysis security engine.\n"
-    "List ALL vulnerabilities in the provided code. Output exactly one line per vulnerability.\n"
-    "Each line must follow this EXACT format (separate fields with the pipe symbol | ):\n"
-    "CWE-ID: Name | severity/10 | vulnerable code snippet | risk (max 15 words) | fix (max 20 words)\n\n"
-    "Example line:\n"
-    "CWE-89: SQL Injection | 10/10 | cur.execute(query) | Attacker bypasses login | Use parameterised queries\n\n"
-    "RULES:\n"
-    "- Do NOT include any other text, commentary, or markdown.\n"
-    "- Do NOT repeat these instructions.\n"
-    "- If there are no vulnerabilities, output just the word NONE.\n"
-    "- Order from most critical to least critical.\n"
-    "- Use only the pipe character to separate fields, nothing else."
+    "Find ALL vulnerabilities in the code.\n\n"
+    "Return **only** a JSON array. No markdown, no code blocks, no explanations.\n"
+    "Each element of the array is an object with exactly these keys:\n"
+    '  "cwe"      – CWE number and short name (e.g., "CWE-78: OS Command Injection")\n'
+    '  "severity" – string like "9/10"\n'
+    '  "vulnerable_code" – the vulnerable line (keep under 50 chars)\n'
+    '  "risk"     – how an attacker would exploit it, max 15 words\n'
+    '  "fix"      – one‑line fix, max 20 words\n\n'
+    "Order from most critical to least critical.\n"
+    "If no vulnerabilities exist, return an empty array []."
 )
 
-_FEW_SHOT_MULTI = [
+_FEW_SHOT_BARE_ARR = [
+    {
+        "user": (
+            "Language: python\n\n"
+            "Code:\n"
+            "from flask import request\n"
+            "import os, sqlite3\n"
+            "@app.route('/login', methods=['POST'])\n"
+            "def login():\n"
+            "    user = request.form['user']\n"
+            "    pass = request.form['pass']\n"
+            "    query = f\"SELECT * FROM users WHERE user='{user}' AND pass='{pass}'\"\n"
+            "    db.execute(query)\n"
+            "@app.route('/ping')\n"
+            "def ping():\n"
+            "    host = request.args.get('host')\n"
+            "    os.system(f'ping {host}')\n"
+        ),
+        "assistant": json.dumps([
+            {
+                "cwe": "CWE-89: SQL Injection",
+                "severity": "10/10",
+                "vulnerable_code": "db.execute(query)",
+                "risk": "Attacker bypasses login",
+                "fix": "Use parameterised queries"
+            },
+            {
+                "cwe": "CWE-78: OS Command Injection",
+                "severity": "9/10",
+                "vulnerable_code": "os.system(f'ping {host}')",
+                "risk": "Attacker controls host to run commands",
+                "fix": "Use subprocess.run with shell=False"
+            }
+        ])
+    }
+]
+
+# -------------------------------------------------------------------
+# FALLBACK: Pipe‑separated list (very robust, used only if bare array fails)
+# -------------------------------------------------------------------
+_SYSTEM_PROMPT_PIPE = (
+    "List ALL vulnerabilities. For each vulnerability output exactly one line with fields separated by \" | \".\n"
+    "Format: CWE-ID: Name | severity/10 | vulnerable code | risk (max 15 words) | fix (max 20 words)\n"
+    "Example: CWE-89: SQL Injection | 10/10 | cur.execute(query) | Attacker bypasses login | Use parameterised queries\n\n"
+    "Do NOT include any other text. If no vulnerabilities, output the word NONE."
+)
+
+_FEW_SHOT_PIPE = [
     {
         "user": (
             "Language: python\n\n"
@@ -58,31 +104,19 @@ _FEW_SHOT_MULTI = [
 ]
 
 # -------------------------------------------------------------------
-# ROBUST FALLBACK: Single vulnerability with full taint tracking
+# ULTIMATE FALLBACK: Single vulnerability with explicit taint examples
 # -------------------------------------------------------------------
 _SYSTEM_PROMPT_SINGLE = (
-    "You are a static analysis security engine specialised in web and desktop vulnerabilities.\n"
-    "Find the single most critical vulnerability in the given code.\n\n"
-    "**Rules**\n"
-    "1. Only report if user‑controlled data reaches a dangerous sink without proper sanitisation.\n"
-    "2. Never flag a dangerous function with static/trusted input.\n"
-    "3. Return exactly ONE JSON object with keys: name, severity, cwe, vulnerable_code, risk, fix.\n"
-    "4. If no vulnerability, return {\"name\": \"No issues found\"}.\n\n"
-    "**Untrusted sources** (examples)\n"
-    "- Python Flask: request.args, request.form, request.json, request.data, request.headers, request.cookies\n"
-    "- Python Django: request.GET, request.POST, request.body, request.META\n"
-    "- Others: input(), sys.argv, os.environ, file reads, etc.\n"
-    "- JavaScript/TypeScript (Node/Express): req.query, req.body, req.params, req.headers, req.cookies\n"
-    "- Java: request.getParameter(), @RequestParam\n"
-    "- PHP: $_GET, $_POST, $_REQUEST, $_COOKIE, file_get_contents('php://input')\n"
-    "**Dangerous sinks** (examples)\n"
-    "- Command: os.system, subprocess.Popen(shell=True), eval, exec, child_process.exec, system(), popen()\n"
-    "- SQL: cursor.execute, db.Query, mysql_query, sqlite3_exec, Statement.executeQuery\n"
-    "- Path traversal: open(), file_get_contents, readfile, fs.readFile (with untrusted path)\n"
-    "- Deserialisation: pickle.loads, yaml.load (unsafe), unserialize, ObjectInputStream\n"
-    "- XSS: document.write, innerHTML, dangerouslySetInnerHTML\n\n"
-    "**Response format**\n"
-    "Exactly one JSON object. No markdown, no extra text."
+    "You are a security code scanner. Find the most critical vulnerability.\n"
+    "Common sources of untrusted input (user‑controlled data):\n"
+    "- Flask: request.args, request.form, request.json, request.data\n"
+    "- Django: request.GET, request.POST\n"
+    "- PHP: $_GET, $_POST\n"
+    "- Node/Express: req.query, req.body\n"
+    "- Java: request.getParameter()\n"
+    "Common dangerous functions: os.system, subprocess.Popen, eval, exec, cursor.execute, pickle.loads, open() with user path.\n\n"
+    "Return a JSON object with keys: name, severity, cwe, vulnerable_code, risk, fix.\n"
+    "If no vulnerability is found, return {\"name\": \"No issues found\"}."
 )
 
 _FEW_SHOT_SINGLE = [
@@ -91,21 +125,19 @@ _FEW_SHOT_SINGLE = [
             "Language: python\n\n"
             "Code:\n"
             "from flask import request\n"
-            "import sqlite3\n"
-            "@app.route('/login', methods=['POST'])\n"
-            "def login():\n"
-            "    user = request.form['user']\n"
-            "    pass = request.form['pass']\n"
-            "    query = f\"SELECT * FROM users WHERE user='{user}' AND pass='{pass}'\"\n"
-            "    db.execute(query)\n"
+            "import os\n"
+            "@app.route('/ping')\n"
+            "def ping():\n"
+            "    host = request.args.get('host')\n"
+            "    os.system(f'ping {host}')\n"
         ),
         "assistant": json.dumps({
-            "name": "SQL Injection",
-            "severity": "10/10",
-            "cwe": "CWE-89: SQL Injection",
-            "vulnerable_code": "query = f\"SELECT * FROM users WHERE user='{user}' AND pass='{pass}'\"",
-            "risk": "Attacker bypasses login by injecting SQL",
-            "fix": "Use parameterised queries"
+            "name": "Command Injection",
+            "severity": "9/10",
+            "cwe": "CWE-78: OS Command Injection",
+            "vulnerable_code": "os.system(f'ping {host}')",
+            "risk": "Attacker can execute arbitrary commands",
+            "fix": "Use subprocess.run with shell=False"
         })
     }
 ]
@@ -113,37 +145,52 @@ _FEW_SHOT_SINGLE = [
 # -------------------------------------------------------------------
 # Helpers
 # -------------------------------------------------------------------
+def _extract_json_array(raw: str) -> List[Dict]:
+    """Extract a JSON array from text, ignoring surrounding noise."""
+    raw = re.sub(r'```(?:json)?\s*|\s*```', '', raw).strip()
+    # Try direct parse
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return parsed
+    except:
+        pass
+    # Find first '[' and last ']'
+    start = raw.find('[')
+    end = raw.rfind(']')
+    if start != -1 and end != -1 and end > start:
+        try:
+            parsed = json.loads(raw[start:end+1])
+            if isinstance(parsed, list):
+                return parsed
+        except:
+            pass
+    raise ValueError("No JSON array found")
+
 def _parse_pipe_list(raw: str) -> List[Dict]:
-    """Parse a list of pipe‑separated lines into vulnerability dicts.
-    Ignores lines that don't match the expected format."""
+    """Parse the pipe‑separated format, skipping any line that doesn't have exactly 5 fields."""
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
-    # If the first non‑empty line is "NONE", return empty list
     if lines and lines[0].upper() == "NONE":
         return []
     vulns = []
     for line in lines:
-        # Skip lines that look like instructions or echoes
-        if line.lower().startswith(("we need", "list all", "output", "example", "do not", "return", "rule")):
+        # Skip obvious instruction echoes
+        if line.lower().startswith(("we need", "list all", "output", "return", "example", "do not")):
             continue
         parts = [p.strip() for p in line.split("|")]
-        # We expect exactly 5 parts: CWE:Name, severity, code, risk, fix
-        if len(parts) == 5:
-            cwe_name, severity, code_snippet, risk, fix = parts
-            # Basic validation: severity should contain a slash (e.g., "9/10")
-            if "/" in severity:
-                vulns.append({
-                    "name": cwe_name,          # e.g., "CWE-89: SQL Injection"
-                    "severity": severity,
-                    "cwe": cwe_name,
-                    "vulnerable_code": code_snippet,
-                    "risk": risk,
-                    "fix": fix
-                })
-        # else: skip malformed lines
+        if len(parts) == 5 and "/" in parts[1]:
+            cwe_name, severity, code, risk, fix = parts
+            vulns.append({
+                "name": cwe_name,
+                "severity": severity,
+                "cwe": cwe_name,
+                "vulnerable_code": code,
+                "risk": risk,
+                "fix": fix
+            })
     return vulns
 
 def _extract_json_object(raw: str) -> Dict:
-    """Extract a single JSON object from the text."""
     raw = re.sub(r'```(?:json)?\s*|\s*```', '', raw).strip()
     match = re.search(r'\{.*\}', raw, re.DOTALL)
     if not match:
@@ -166,7 +213,7 @@ def _most_critical(vulns: List[Dict]) -> Dict:
             "risk": "No security issues detected.",
             "fix": "N/A"
         }
-    return vulns[0]  # already sorted
+    return vulns[0]
 
 def _run_llm(system: str, few_shot: List, user_prompt: str, max_tokens: int, timeout: int) -> str:
     headers = {
@@ -191,9 +238,6 @@ def _run_llm(system: str, few_shot: List, user_prompt: str, max_tokens: int, tim
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"].strip()
 
-# -------------------------------------------------------------------
-# Main function
-# -------------------------------------------------------------------
 def analyze_code(code: str, language: str) -> Dict[str, Any]:
     if not LLM_API_KEY:
         logger.error("OPENROUTER_API_KEY not set.")
@@ -205,32 +249,35 @@ def analyze_code(code: str, language: str) -> Dict[str, Any]:
         }
 
     sanitized = code.replace("<", "&lt;").replace(">", "&gt;")
+    user_prompt = f"Language: {language}\n\nCode:\n{sanitized}\n\nList all vulnerabilities."
 
-    # ----- Primary attempt: pipe‑separated list -----
-    user_prompt_multi = (
-        f"Language: {language}\n\n"
-        f"Code:\n{sanitized}\n\n"
-        "List all vulnerabilities using the pipe format exactly as instructed."
-    )
+    # ---- Strategy 1: Bare JSON array (most powerful) ----
     try:
-        raw = _run_llm(_SYSTEM_PROMPT_MULTI, _FEW_SHOT_MULTI, user_prompt_multi, 4096, 90)
-        vulns = _parse_pipe_list(raw)
+        raw = _run_llm(_SYSTEM_PROMPT_BARE_ARR, _FEW_SHOT_BARE_ARR, user_prompt, 4096, 90)
+        vulns = _extract_json_array(raw)
+        vulns = [_validate_vuln(v) for v in vulns]
         if vulns:
             return {"status": "success", "vulnerabilities": vulns, "most_critical": vulns[0]}
         else:
-            # Maybe the model returned NONE (no vulnerabilities) – that's valid
             return {"status": "success", "vulnerabilities": [], "most_critical": _most_critical([])}
     except Exception as e:
-        logger.warning(f"Pipe‑list attempt failed: {e}. Falling back to single JSON.")
+        logger.warning(f"Bare array failed: {e}")
 
-    # ----- Fallback: Single vulnerability with full taint knowledge -----
-    user_prompt_single = (
-        f"Language: {language}\n\n"
-        f"Code:\n{sanitized}\n\n"
-        "Return exactly one JSON object for the most critical vulnerability."
-    )
+    # ---- Strategy 2: Pipe‑separated list ----
     try:
-        raw = _run_llm(_SYSTEM_PROMPT_SINGLE, _FEW_SHOT_SINGLE, user_prompt_single, 400, 30)
+        raw = _run_llm(_SYSTEM_PROMPT_PIPE, _FEW_SHOT_PIPE, user_prompt, 4096, 60)
+        vulns = _parse_pipe_list(raw)
+        vulns = [_validate_vuln(v) for v in vulns]
+        if vulns:
+            return {"status": "success", "vulnerabilities": vulns, "most_critical": vulns[0]}
+        else:
+            return {"status": "success", "vulnerabilities": [], "most_critical": _most_critical([])}
+    except Exception as e:
+        logger.warning(f"Pipe list failed: {e}")
+
+    # ---- Strategy 3: Single vulnerability (last resort) ----
+    try:
+        raw = _run_llm(_SYSTEM_PROMPT_SINGLE, _FEW_SHOT_SINGLE, user_prompt, 400, 30)
         obj = _extract_json_object(raw)
         obj = _validate_vuln(obj)
         if obj.get("name") == "No issues found":
@@ -240,8 +287,8 @@ def analyze_code(code: str, language: str) -> Dict[str, Any]:
             obj.setdefault("risk", "No security issues detected.")
             obj.setdefault("fix", "N/A")
         return {"status": "success", "vulnerabilities": [obj], "most_critical": obj}
-    except Exception as e2:
-        logger.error(f"All strategies failed: {e2}")
+    except Exception as e:
+        logger.error(f"All strategies failed: {e}")
         return {
             "status": "error",
             "error_code": "INVALID_RESPONSE",
