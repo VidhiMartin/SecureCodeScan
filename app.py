@@ -256,6 +256,10 @@ def login_page():
 def signup_page():
     return render_template("signup.html")
 
+@app.route("/reset-password")
+def reset_password_page():
+    return render_template("reset-password.html")
+
 
 @app.route("/scan", methods=["POST"])
 @limiter.limit("10 per minute")
