@@ -10,7 +10,7 @@
     
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     
-    <!-- Page-specific styles (kept as is) -->
+    <!-- Page‑specific styles -->
     <style>
         .nav-header {
             position: absolute;
@@ -105,6 +105,45 @@
             z-index: 99999;
             max-width: 340px;
             backdrop-filter: blur(10px);
+        }
+
+        /* Vulnerability card styles (new) */
+        .vuln-card {
+            background: #010409;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            text-align: left;
+        }
+        .vuln-card .vuln-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .vuln-card .vuln-name {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.1rem;
+            color: #38bdf8;
+        }
+        .vuln-card .vuln-severity {
+            background: rgba(255,68,68,0.15);
+            color: #ff4444;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        .vuln-card .detail-row {
+            margin-bottom: 8px;
+        }
+        .vuln-card .detail-row strong {
+            color: #94a3b8;
+        }
+        .vuln-card code {
+            color: #e6edf3;
+            word-break: break-word;
         }
     </style>
     
@@ -740,11 +779,12 @@
             </div>
         </div>
 
+        <!-- NEW: Results section that lists all vulnerabilities -->
         <div class="result-card" id="result-card">
             <div class="result-header">
-                <i class="fas fa-search"></i> Audit Complete: Vulnerability Report
+                <i class="fas fa-search"></i> Audit Complete: <span id="vuln-count"></span> Vulnerabilities Found
             </div>
-            <pre><code id="result" class="language-json"></code></pre>
+            <div id="vulnerabilities-list"></div>
         </div>
     </div>
 
@@ -862,14 +902,46 @@
             finishProgress(() => {
                 if (!response.ok) {
                     showError(data.audit_summary || "Scan failed. Please try again.");
-                } else {
-                    const resultEl = document.getElementById("result");
-                    const resultCard = document.getElementById("result-card");
-                    resultEl.textContent = JSON.stringify(data, null, 2);
-                    Prism.highlightElement(resultEl);
+                    return;
+                }
+
+                const resultCard = document.getElementById("result-card");
+                const listEl = document.getElementById("vulnerabilities-list");
+                const countEl = document.getElementById("vuln-count");
+
+                // Clear previous results
+                listEl.innerHTML = "";
+
+                // Handle both new format (vulnerabilities array) and old single-object format
+                const vulns = data.vulnerabilities || (data.name ? [data] : []);
+
+                if (vulns.length === 0) {
+                    countEl.textContent = "0";
+                    listEl.innerHTML = '<p style="color:#00ff88; text-align:center; padding:20px;">✅ No security issues detected.</p>';
                     resultCard.style.display = "block";
                     resultCard.scrollIntoView({ behavior: "smooth" });
+                    return;
                 }
+
+                countEl.textContent = vulns.length;
+
+                let html = '';
+                vulns.forEach((v) => {
+                    html += `
+                    <div class="vuln-card">
+                        <div class="vuln-header">
+                            <span class="vuln-name">${v.name || 'Vulnerability'}</span>
+                            <span class="vuln-severity">${v.severity || 'N/A'}</span>
+                        </div>
+                        <div class="detail-row"><strong>CWE:</strong> ${v.cwe || 'N/A'}</div>
+                        <div class="detail-row"><strong>Code:</strong> <code>${v.vulnerable_code || 'N/A'}</code></div>
+                        <div class="detail-row"><strong>Risk:</strong> ${v.risk || 'N/A'}</div>
+                        <div class="detail-row"><strong>Fix:</strong> ${v.fix || 'N/A'}</div>
+                    </div>`;
+                });
+                listEl.innerHTML = html;
+                resultCard.style.display = "block";
+                resultCard.scrollIntoView({ behavior: "smooth" });
             });
 
         } catch (err) {
