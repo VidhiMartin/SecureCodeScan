@@ -1,7 +1,7 @@
 # updated firebase-admin
 # force fresh install 2026-06-18
 flask
-firebase-admin>=6.5.0
+firebase-admin==6.5.0
 pyotp
 qrcode
 pillow
