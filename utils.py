@@ -4,12 +4,10 @@ import json
 import logging
 import re
 import hashlib
-import time
 from typing import Dict, Any, List, Optional
-from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
-import pickle  # for caching
+import pickle
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,22 +15,25 @@ logger = logging.getLogger(__name__)
 LLM_API_KEY = os.getenv("OPENROUTER_API_KEY")
 LLM_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
-# Use ONLY the fast model – it's quick and good enough
-MODEL = "google/gemini-2.0-flash-exp:free"
+# Use only models that are known to work – no Gemini
+PRIMARY_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+FALLBACK_MODEL = "meta-llama/llama-3-8b-instruct:free"
+# Additional fallback (just in case)
+LAST_RESORT_MODEL = "microsoft/phi-3-mini-128k-instruct:free"
 
 REQUIRED_KEYS = {"cwe", "severity", "vulnerable_code", "risk", "fix"}
-MAX_CODE_LENGTH = 100000          # increased limit
-CHUNK_LINES = 60                  # bigger chunks → fewer calls
-MAX_TOKENS = 2048                 # sufficient for a chunk
-TIMEOUT = 15                      # fast fail
-MAX_WORKERS = 8                   # parallel requests
-CACHE_FILE = "scan_cache.pkl"     # simple file cache
+MAX_CODE_LENGTH = 100000
+CHUNK_LINES = 60
+MAX_TOKENS = 2048
+TIMEOUT = 20
+MAX_WORKERS = 5
+CACHE_FILE = "/tmp/scan_cache.pkl"   # writable in Lambda
 
 # Rate limiting semaphore
 RATE_LIMIT = threading.Semaphore(MAX_WORKERS)
 
 # -------------------------------------------------------------------
-# Concise system prompt (no few‑shot, no fluff)
+# Concise system prompt
 # -------------------------------------------------------------------
 _SYSTEM_PROMPT = (
     "You are a security scanner. Find EVERY vulnerability in the code inside <code> tags.\n"
@@ -42,13 +43,13 @@ _SYSTEM_PROMPT = (
 )
 
 # -------------------------------------------------------------------
-# Regex scanner – catches most issues instantly
+# Expanded regex scanner – catches ~20 common vulnerability types
 # -------------------------------------------------------------------
 def regex_scan_code(code: str) -> List[Dict]:
     vulns = []
     lines = code.splitlines()
     for idx, line in enumerate(lines, start=1):
-        # SQL Injection (string concatenation in execute)
+        # SQL Injection (string concatenation in execute/query)
         if re.search(r'(execute|executemany|query)\s*\(.*?\+.*?\)', line, re.IGNORECASE):
             vulns.append({
                 "cwe": "CWE-89: SQL Injection",
@@ -66,7 +67,16 @@ def regex_scan_code(code: str) -> List[Dict]:
                 "risk": "Remote code execution",
                 "fix": "Use subprocess with shell=False"
             })
-        # XSS
+        # Command Injection via eval/exec
+        if re.search(r'(eval|exec)\s*\(', line):
+            vulns.append({
+                "cwe": "CWE-94: Code Injection",
+                "severity": "9/10",
+                "vulnerable_code": line.strip()[:50],
+                "risk": "Arbitrary code execution",
+                "fix": "Avoid eval/exec; use safe alternatives"
+            })
+        # XSS (reflected)
         if re.search(r'return\s+.*?\{\{.*?\}\}', line) or re.search(r'return\s+.*?\+.*?(request\.|session\.)', line, re.IGNORECASE):
             vulns.append({
                 "cwe": "CWE-79: Cross-Site Scripting",
@@ -85,7 +95,7 @@ def regex_scan_code(code: str) -> List[Dict]:
                 "fix": "Validate file path"
             })
         # Hardcoded Credentials
-        if re.search(r'(secret_key|password|api_key)\s*=\s*[\'"]\w+[\'"]', line, re.IGNORECASE):
+        if re.search(r'(secret_key|password|api_key|token)\s*=\s*[\'"]\w+[\'"]', line, re.IGNORECASE):
             vulns.append({
                 "cwe": "CWE-798: Hard-coded Credentials",
                 "severity": "8/10",
@@ -93,8 +103,8 @@ def regex_scan_code(code: str) -> List[Dict]:
                 "risk": "Exposed credentials",
                 "fix": "Use environment variables"
             })
-        # Insecure Deserialization
-        if re.search(r'pickle\.loads\s*\(', line):
+        # Insecure Deserialization (pickle, yaml)
+        if re.search(r'(pickle\.loads|yaml\.load)\s*\(', line):
             vulns.append({
                 "cwe": "CWE-502: Insecure Deserialization",
                 "severity": "9/10",
@@ -111,23 +121,23 @@ def regex_scan_code(code: str) -> List[Dict]:
                 "risk": "Open redirect for phishing",
                 "fix": "Validate redirect target"
             })
-        # Weak Crypto (MD5)
-        if re.search(r'hashlib\.md5\s*\(', line):
+        # Weak Crypto (MD5, SHA1)
+        if re.search(r'hashlib\.(md5|sha1)\s*\(', line):
             vulns.append({
                 "cwe": "CWE-327: Use of Weak Cryptography",
                 "severity": "7/10",
                 "vulnerable_code": line.strip()[:50],
-                "risk": "MD5 collisions",
+                "risk": "Weak hash may be cracked",
                 "fix": "Use SHA-256 or bcrypt"
             })
-        # Info Disclosure (debug)
-        if re.search(r'@app\.route.*/debug', line):
+        # Info Disclosure (debug endpoints, environment exposure)
+        if re.search(r'@app\.route.*/debug', line) or re.search(r'os\.environ', line):
             vulns.append({
                 "cwe": "CWE-200: Information Exposure",
                 "severity": "6/10",
                 "vulnerable_code": line.strip()[:50],
-                "risk": "Exposes env vars",
-                "fix": "Remove debug endpoint"
+                "risk": "Exposes sensitive info",
+                "fix": "Remove debug endpoints; sanitize output"
             })
         # Race Condition (TOCTOU)
         if re.search(r'if\s+not\s+os\.path\.exists', line) and re.search(r'with\s+open.*?w', line):
@@ -138,16 +148,16 @@ def regex_scan_code(code: str) -> List[Dict]:
                 "risk": "Race condition",
                 "fix": "Use atomic operations"
             })
-        # Insecure Temp File
+        # Insecure Temporary File
         if re.search(r'tempfile\.mkstemp', line):
             vulns.append({
                 "cwe": "CWE-377: Insecure Temporary File",
                 "severity": "5/10",
                 "vulnerable_code": line.strip()[:50],
                 "risk": "Temp file exposure",
-                "fix": "Use secure temp file"
+                "fix": "Use secure temp file with proper permissions"
             })
-        # CSRF‑prone POST
+        # CSRF‑prone POST (no token check)
         if re.search(r'@app\.route.*POST', line) and not re.search(r'csrf|_token', line, re.IGNORECASE):
             vulns.append({
                 "cwe": "CWE-352: CSRF",
@@ -155,6 +165,24 @@ def regex_scan_code(code: str) -> List[Dict]:
                 "vulnerable_code": line.strip()[:50],
                 "risk": "CSRF attack",
                 "fix": "Add CSRF token"
+            })
+        # Broken Authentication (hardcoded admin check)
+        if re.search(r'if\s+.*==\s*[\'"]admin[\'"]', line) and re.search(r'(role|user)', line, re.IGNORECASE):
+            vulns.append({
+                "cwe": "CWE-287: Improper Authentication",
+                "severity": "8/10",
+                "vulnerable_code": line.strip()[:50],
+                "risk": "Authentication bypass",
+                "fix": "Use proper role-based access control"
+            })
+        # IDOR (direct object reference with user input)
+        if re.search(r'SELECT.*WHERE\s+id\s*=\s*.*?request\.', line, re.IGNORECASE):
+            vulns.append({
+                "cwe": "CWE-639: Insecure Direct Object Reference",
+                "severity": "7/10",
+                "vulnerable_code": line.strip()[:50],
+                "risk": "Unauthorized data access",
+                "fix": "Verify user ownership"
             })
     return vulns
 
@@ -203,7 +231,7 @@ def _most_critical(vulns: List[Dict]) -> Dict:
     return vulns[0]
 
 # -------------------------------------------------------------------
-# Caching (file‑based)
+# Caching (file‑based, with error handling)
 # -------------------------------------------------------------------
 def load_cache():
     if os.path.exists(CACHE_FILE):
@@ -215,8 +243,11 @@ def load_cache():
     return {}
 
 def save_cache(cache):
-    with open(CACHE_FILE, 'wb') as f:
-        pickle.dump(cache, f)
+    try:
+        with open(CACHE_FILE, 'wb') as f:
+            pickle.dump(cache, f)
+    except Exception as e:
+        logger.warning(f"Could not save cache: {e}")
 
 _cache = load_cache()
 
@@ -228,42 +259,49 @@ def set_cached_result(code_hash: str, result: Dict) -> None:
     save_cache(_cache)
 
 # -------------------------------------------------------------------
-# LLM call (fast model only, with rate limiting)
+# LLM call with fallback models
 # -------------------------------------------------------------------
-def _run_llm(user_prompt: str) -> str:
-    with RATE_LIMIT:
-        headers = {
-            "Authorization": f"Bearer {LLM_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://securecodescanner.vercel.app",
-            "X-Title": "Enterprise Secure Scanner",
-        }
-        messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt}
-        ]
-        payload = {
-            "model": MODEL,
-            "messages": messages,
-            "temperature": 0.1,
-            "max_tokens": MAX_TOKENS,
-        }
-        resp = requests.post(LLM_ENDPOINT, headers=headers, json=payload, timeout=TIMEOUT)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
+def _run_llm(user_prompt: str, model: str) -> str:
+    headers = {
+        "Authorization": f"Bearer {LLM_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://securecodescanner.vercel.app",
+        "X-Title": "Enterprise Secure Scanner",
+    }
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt}
+    ]
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.1,
+        "max_tokens": MAX_TOKENS,
+    }
+    resp = requests.post(LLM_ENDPOINT, headers=headers, json=payload, timeout=TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"].strip()
 
-def scan_chunk(chunk: str, language: str, idx: int, total: int) -> List[Dict]:
+def scan_chunk_with_llm(chunk: str, language: str, idx: int, total: int) -> List[Dict]:
     user_prompt = f"Language: {language}\n\n<code>\n{chunk}\n</code>"
-    try:
-        raw = _run_llm(user_prompt)
-        vulns = _extract_json_array(raw)
-        vulns = [_validate_vuln(v) for v in vulns]
-        logger.info(f"Chunk {idx+1}/{total} LLM found {len(vulns)}")
-        return vulns
-    except Exception as e:
-        logger.warning(f"Chunk {idx+1} LLM failed: {e}")
-        return []
+    models_to_try = [PRIMARY_MODEL, FALLBACK_MODEL, LAST_RESORT_MODEL]
+    for model in models_to_try:
+        try:
+            with RATE_LIMIT:
+                raw = _run_llm(user_prompt, model)
+            vulns = _extract_json_array(raw)
+            vulns = [_validate_vuln(v) for v in vulns]
+            logger.info(f"Chunk {idx+1}/{total} LLM ({model}) found {len(vulns)}")
+            return vulns
+        except Exception as e:
+            logger.warning(f"Chunk {idx+1} with model {model} failed: {e}")
+            continue
+    logger.warning(f"Chunk {idx+1} all LLM attempts failed.")
+    return []
 
+# -------------------------------------------------------------------
+# Merge & deduplicate
+# -------------------------------------------------------------------
 def merge_and_deduplicate(all_vulns: List[Dict]) -> List[Dict]:
     seen = {}
     for v in all_vulns:
@@ -271,7 +309,6 @@ def merge_and_deduplicate(all_vulns: List[Dict]) -> List[Dict]:
         if key not in seen:
             seen[key] = v
         else:
-            # keep highest severity
             def score(s):
                 m = re.search(r'(\d+)/10', s)
                 return int(m.group(1)) if m else 0
@@ -300,31 +337,29 @@ def analyze_code(code: str, language: str) -> Dict[str, Any]:
         logger.info("Returning cached result")
         return cached
 
-    # 1. Regex scan (fast)
+    # 1. Regex scan (fast, catches most)
     regex_vulns = regex_scan_code(code)
     logger.info(f"Regex found {len(regex_vulns)} potential issues")
 
-    # 2. LLM scan on chunks – only if regex didn't already catch everything?
-    # We'll still run LLM to catch more subtle issues, but we can skip chunks that have no suspicious patterns.
-    # Simple heuristic: if a chunk contains any keyword that suggests vulnerability, scan it.
-    suspicious_keywords = ["request.", "input(", "exec(", "eval(", "open(", "pickle", "os.", "subprocess"]
+    # 2. LLM scan on suspicious chunks only
+    suspicious_keywords = ["request.", "input(", "exec(", "eval(", "open(", "pickle", "os.", "subprocess", "sqlite3", "cursor.execute"]
     chunks = chunk_code(code, CHUNK_LINES)
     chunks_to_scan = [chunk for chunk in chunks if any(kw in chunk for kw in suspicious_keywords)]
 
     llm_vulns = []
-    if chunks_to_scan:
+    if chunks_to_scan and LLM_API_KEY:
         logger.info(f"Scanning {len(chunks_to_scan)} suspicious chunks with LLM")
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {executor.submit(scan_chunk, chunk, language, idx, len(chunks_to_scan)): idx
+            futures = {executor.submit(scan_chunk_with_llm, chunk, language, idx, len(chunks_to_scan)): idx
                        for idx, chunk in enumerate(chunks_to_scan)}
             for future in as_completed(futures):
                 try:
-                    vulns = future.result(timeout=TIMEOUT + 5)
+                    vulns = future.result(timeout=TIMEOUT + 10)
                     llm_vulns.extend(vulns)
                 except Exception as e:
-                    logger.error(f"Chunk scan failed: {e}")
+                    logger.error(f"Chunk scan timed out or failed: {e}")
 
-    # Combine
+    # Combine and deduplicate
     all_vulns = regex_vulns + llm_vulns
     merged = merge_and_deduplicate(all_vulns)
 
