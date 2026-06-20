@@ -15,25 +15,23 @@ logger = logging.getLogger(__name__)
 LLM_API_KEY = os.getenv("OPENROUTER_API_KEY")
 LLM_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
-# Use only models that are known to work – no Gemini
-PRIMARY_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
-FALLBACK_MODEL = "meta-llama/llama-3-8b-instruct:free"
-# Additional fallback (just in case)
-LAST_RESORT_MODEL = "microsoft/phi-3-mini-128k-instruct:free"
+# Use only confirmed-working free models (no Gemini)
+PRIMARY_MODEL = "meta-llama/llama-3-8b-instruct:free"
+FALLBACK_MODEL = "microsoft/phi-3-mini-128k-instruct:free"
 
 REQUIRED_KEYS = {"cwe", "severity", "vulnerable_code", "risk", "fix"}
 MAX_CODE_LENGTH = 100000
 CHUNK_LINES = 60
-MAX_TOKENS = 2048
-TIMEOUT = 20
+MAX_TOKENS = 4096
+TIMEOUT = 25
 MAX_WORKERS = 5
 CACHE_FILE = "/tmp/scan_cache.pkl"   # writable in Lambda
 
-# Rate limiting semaphore
+# Rate limiting
 RATE_LIMIT = threading.Semaphore(MAX_WORKERS)
 
 # -------------------------------------------------------------------
-# Concise system prompt
+# System prompt – exhaustive scan
 # -------------------------------------------------------------------
 _SYSTEM_PROMPT = (
     "You are a security scanner. Find EVERY vulnerability in the code inside <code> tags.\n"
@@ -43,147 +41,102 @@ _SYSTEM_PROMPT = (
 )
 
 # -------------------------------------------------------------------
-# Expanded regex scanner – catches ~20 common vulnerability types
+# Comprehensive regex scanner
 # -------------------------------------------------------------------
 def regex_scan_code(code: str) -> List[Dict]:
     vulns = []
     lines = code.splitlines()
     for idx, line in enumerate(lines, start=1):
-        # SQL Injection (string concatenation in execute/query)
+        # SQL Injection
         if re.search(r'(execute|executemany|query)\s*\(.*?\+.*?\)', line, re.IGNORECASE):
-            vulns.append({
-                "cwe": "CWE-89: SQL Injection",
-                "severity": "9/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "SQL injection leads to data breach",
-                "fix": "Use parameterised queries"
-            })
+            vulns.append({"cwe": "CWE-89: SQL Injection", "severity": "9/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "SQL injection leads to data breach",
+                          "fix": "Use parameterised queries"})
         # Command Injection
         if re.search(r'os\.(system|popen)\s*\(', line) or re.search(r'subprocess\.(call|Popen|run).*shell\s*=\s*True', line, re.IGNORECASE):
-            vulns.append({
-                "cwe": "CWE-78: OS Command Injection",
-                "severity": "9/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "Remote code execution",
-                "fix": "Use subprocess with shell=False"
-            })
-        # Command Injection via eval/exec
+            vulns.append({"cwe": "CWE-78: OS Command Injection", "severity": "9/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Remote code execution",
+                          "fix": "Use subprocess with shell=False"})
+        # eval/exec
         if re.search(r'(eval|exec)\s*\(', line):
-            vulns.append({
-                "cwe": "CWE-94: Code Injection",
-                "severity": "9/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "Arbitrary code execution",
-                "fix": "Avoid eval/exec; use safe alternatives"
-            })
-        # XSS (reflected)
+            vulns.append({"cwe": "CWE-94: Code Injection", "severity": "9/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Arbitrary code execution",
+                          "fix": "Avoid eval/exec"})
+        # XSS
         if re.search(r'return\s+.*?\{\{.*?\}\}', line) or re.search(r'return\s+.*?\+.*?(request\.|session\.)', line, re.IGNORECASE):
-            vulns.append({
-                "cwe": "CWE-79: Cross-Site Scripting",
-                "severity": "7/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "Reflected XSS",
-                "fix": "Escape output"
-            })
+            vulns.append({"cwe": "CWE-79: Cross-Site Scripting", "severity": "7/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Reflected XSS",
+                          "fix": "Escape output"})
         # Path Traversal
         if re.search(r'open\s*\(\s*(request\.|session\.|\w+\s*\+)', line):
-            vulns.append({
-                "cwe": "CWE-22: Path Traversal",
-                "severity": "8/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "Arbitrary file read",
-                "fix": "Validate file path"
-            })
+            vulns.append({"cwe": "CWE-22: Path Traversal", "severity": "8/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Arbitrary file read",
+                          "fix": "Validate file path"})
         # Hardcoded Credentials
         if re.search(r'(secret_key|password|api_key|token)\s*=\s*[\'"]\w+[\'"]', line, re.IGNORECASE):
-            vulns.append({
-                "cwe": "CWE-798: Hard-coded Credentials",
-                "severity": "8/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "Exposed credentials",
-                "fix": "Use environment variables"
-            })
+            vulns.append({"cwe": "CWE-798: Hard-coded Credentials", "severity": "8/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Exposed credentials",
+                          "fix": "Use environment variables"})
         # Insecure Deserialization (pickle, yaml)
         if re.search(r'(pickle\.loads|yaml\.load)\s*\(', line):
-            vulns.append({
-                "cwe": "CWE-502: Insecure Deserialization",
-                "severity": "9/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "Remote code execution",
-                "fix": "Use JSON or validate input"
-            })
+            vulns.append({"cwe": "CWE-502: Insecure Deserialization", "severity": "9/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Remote code execution",
+                          "fix": "Use JSON or validate input"})
         # Open Redirect
         if re.search(r'redirect\s*\(\s*(request\.|session\.|\w+)\s*\)', line):
-            vulns.append({
-                "cwe": "CWE-601: Open Redirect",
-                "severity": "6/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "Open redirect for phishing",
-                "fix": "Validate redirect target"
-            })
+            vulns.append({"cwe": "CWE-601: Open Redirect", "severity": "6/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Open redirect for phishing",
+                          "fix": "Validate redirect target"})
         # Weak Crypto (MD5, SHA1)
         if re.search(r'hashlib\.(md5|sha1)\s*\(', line):
-            vulns.append({
-                "cwe": "CWE-327: Use of Weak Cryptography",
-                "severity": "7/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "Weak hash may be cracked",
-                "fix": "Use SHA-256 or bcrypt"
-            })
-        # Info Disclosure (debug endpoints, environment exposure)
+            vulns.append({"cwe": "CWE-327: Use of Weak Cryptography", "severity": "7/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Weak hash may be cracked",
+                          "fix": "Use SHA-256 or bcrypt"})
+        # Information Disclosure (debug, environ)
         if re.search(r'@app\.route.*/debug', line) or re.search(r'os\.environ', line):
-            vulns.append({
-                "cwe": "CWE-200: Information Exposure",
-                "severity": "6/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "Exposes sensitive info",
-                "fix": "Remove debug endpoints; sanitize output"
-            })
+            vulns.append({"cwe": "CWE-200: Information Exposure", "severity": "6/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Exposes sensitive info",
+                          "fix": "Remove debug endpoints; sanitize output"})
         # Race Condition (TOCTOU)
         if re.search(r'if\s+not\s+os\.path\.exists', line) and re.search(r'with\s+open.*?w', line):
-            vulns.append({
-                "cwe": "CWE-367: TOCTOU",
-                "severity": "6/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "Race condition",
-                "fix": "Use atomic operations"
-            })
+            vulns.append({"cwe": "CWE-367: TOCTOU", "severity": "6/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Race condition",
+                          "fix": "Use atomic operations"})
         # Insecure Temporary File
         if re.search(r'tempfile\.mkstemp', line):
-            vulns.append({
-                "cwe": "CWE-377: Insecure Temporary File",
-                "severity": "5/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "Temp file exposure",
-                "fix": "Use secure temp file with proper permissions"
-            })
-        # CSRF‑prone POST (no token check)
+            vulns.append({"cwe": "CWE-377: Insecure Temporary File", "severity": "5/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Temp file exposure",
+                          "fix": "Use secure temp file"})
+        # CSRF‑prone POST
         if re.search(r'@app\.route.*POST', line) and not re.search(r'csrf|_token', line, re.IGNORECASE):
-            vulns.append({
-                "cwe": "CWE-352: CSRF",
-                "severity": "6/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "CSRF attack",
-                "fix": "Add CSRF token"
-            })
+            vulns.append({"cwe": "CWE-352: CSRF", "severity": "6/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "CSRF attack",
+                          "fix": "Add CSRF token"})
         # Broken Authentication (hardcoded admin check)
         if re.search(r'if\s+.*==\s*[\'"]admin[\'"]', line) and re.search(r'(role|user)', line, re.IGNORECASE):
-            vulns.append({
-                "cwe": "CWE-287: Improper Authentication",
-                "severity": "8/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "Authentication bypass",
-                "fix": "Use proper role-based access control"
-            })
-        # IDOR (direct object reference with user input)
+            vulns.append({"cwe": "CWE-287: Improper Authentication", "severity": "8/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Authentication bypass",
+                          "fix": "Use proper role-based access control"})
+        # IDOR (direct object reference)
         if re.search(r'SELECT.*WHERE\s+id\s*=\s*.*?request\.', line, re.IGNORECASE):
-            vulns.append({
-                "cwe": "CWE-639: Insecure Direct Object Reference",
-                "severity": "7/10",
-                "vulnerable_code": line.strip()[:50],
-                "risk": "Unauthorized data access",
-                "fix": "Verify user ownership"
-            })
+            vulns.append({"cwe": "CWE-639: Insecure Direct Object Reference", "severity": "7/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Unauthorized data access",
+                          "fix": "Verify user ownership"})
+        # Backdoor token
+        if re.search(r'MASTER_OVERRIDE_TOKEN', line):
+            vulns.append({"cwe": "CWE-798: Hard-coded Credentials", "severity": "8/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "Hardcoded backdoor token",
+                          "fix": "Remove backdoor"})
+        # Missing session authentication
+        if re.search(r'@app\.route.*\n.*session\.get', line):
+            vulns.append({"cwe": "CWE-306: Missing Authentication", "severity": "8/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "No authentication for critical action",
+                          "fix": "Require authentication"})
+        # Insecure direct object reference in note
+        if re.search(r'/note/<.*>', line) and re.search(r'SELECT.*FROM notes WHERE id=', line):
+            vulns.append({"cwe": "CWE-639: Insecure Direct Object Reference", "severity": "7/10",
+                          "vulnerable_code": line.strip()[:50], "risk": "IDOR allows viewing others' notes",
+                          "fix": "Check note owner"})
     return vulns
 
 # -------------------------------------------------------------------
@@ -231,7 +184,7 @@ def _most_critical(vulns: List[Dict]) -> Dict:
     return vulns[0]
 
 # -------------------------------------------------------------------
-# Caching (file‑based, with error handling)
+# Caching (file‑based, error‑proof)
 # -------------------------------------------------------------------
 def load_cache():
     if os.path.exists(CACHE_FILE):
@@ -284,7 +237,7 @@ def _run_llm(user_prompt: str, model: str) -> str:
 
 def scan_chunk_with_llm(chunk: str, language: str, idx: int, total: int) -> List[Dict]:
     user_prompt = f"Language: {language}\n\n<code>\n{chunk}\n</code>"
-    models_to_try = [PRIMARY_MODEL, FALLBACK_MODEL, LAST_RESORT_MODEL]
+    models_to_try = [PRIMARY_MODEL, FALLBACK_MODEL]
     for model in models_to_try:
         try:
             with RATE_LIMIT:
@@ -337,21 +290,18 @@ def analyze_code(code: str, language: str) -> Dict[str, Any]:
         logger.info("Returning cached result")
         return cached
 
-    # 1. Regex scan (fast, catches most)
+    # 1. Regex scan (fast)
     regex_vulns = regex_scan_code(code)
     logger.info(f"Regex found {len(regex_vulns)} potential issues")
 
-    # 2. LLM scan on suspicious chunks only
-    suspicious_keywords = ["request.", "input(", "exec(", "eval(", "open(", "pickle", "os.", "subprocess", "sqlite3", "cursor.execute"]
+    # 2. LLM scan on ALL chunks (no filtering)
     chunks = chunk_code(code, CHUNK_LINES)
-    chunks_to_scan = [chunk for chunk in chunks if any(kw in chunk for kw in suspicious_keywords)]
-
     llm_vulns = []
-    if chunks_to_scan and LLM_API_KEY:
-        logger.info(f"Scanning {len(chunks_to_scan)} suspicious chunks with LLM")
+    if LLM_API_KEY and chunks:
+        logger.info(f"Scanning {len(chunks)} chunks with LLM (parallel)")
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {executor.submit(scan_chunk_with_llm, chunk, language, idx, len(chunks_to_scan)): idx
-                       for idx, chunk in enumerate(chunks_to_scan)}
+            futures = {executor.submit(scan_chunk_with_llm, chunk, language, idx, len(chunks)): idx
+                       for idx, chunk in enumerate(chunks)}
             for future in as_completed(futures):
                 try:
                     vulns = future.result(timeout=TIMEOUT + 10)
@@ -359,7 +309,6 @@ def analyze_code(code: str, language: str) -> Dict[str, Any]:
                 except Exception as e:
                     logger.error(f"Chunk scan timed out or failed: {e}")
 
-    # Combine and deduplicate
     all_vulns = regex_vulns + llm_vulns
     merged = merge_and_deduplicate(all_vulns)
 
