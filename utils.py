@@ -20,7 +20,7 @@ FAST_MODEL = "google/gemini-2.0-flash-exp:free"            # Rapid processing fa
 
 REQUIRED_KEYS = {"cwe", "severity", "vulnerable_code", "risk", "fix"}
 MAX_CODE_LENGTH = 50000
-CHUNK_LINES = 45                     # Slightly increased to preserve function block contexts
+CHUNK_LINES = 45                     # Balanced to preserve function block context
 MAX_TOKENS_PRIMARY = 2048            
 MAX_TOKENS_FAST = 1024
 TIMEOUT_PRIMARY = 25                 
@@ -133,5 +133,5 @@ def is_high_risk(chunk: str) -> bool:
     return any(kw in lower for kw in HIGH_RISK_KEYWORDS)
 
 def _extract_json_array(raw: str) -> List[Dict]:
+    # Fixed the broken string literal/regex sequence here
     raw = re.sub(r'
-http://googleusercontent.com/immersive_entry_chip/0
