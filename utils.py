@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 LLM_API_KEY = os.getenv("OPENROUTER_API_KEY")
 LLM_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
-# Verified free models (both work with OpenRouter free tier)
+# Verified free models (both should work with OpenRouter free tier)
 PRIMARY_MODEL = "cohere/north-mini-code:free"
-FALLBACK_MODEL = "meta-llama/llama-3-8b-instruct:free"
+FALLBACK_MODEL = "google/gemini-2.0-flash-lite-preview-02-05:free"  # replaced llama-3-8b which gave 404
 
 REQUIRED_KEYS = {"cwe", "severity", "vulnerable_code", "risk", "fix"}
 MAX_CODE_LENGTH = 50000
@@ -223,9 +223,10 @@ def _parse_audit_text(text: str) -> List[Dict]:
     (bullet can be -, *, •, or number; fields can be in any order)
     Returns list of dicts with keys: cwe, severity, vulnerable_code, risk, fix.
     """
+    if not text or "No vulnerabilities found." in text:
+        return []
+
     vulns = []
-    # Split into items by bullet points (lines starting with bullet or number)
-    # First, remove any code fences or extraneous text
     lines = text.splitlines()
     items = []
     current_item = []
@@ -251,28 +252,27 @@ def _parse_audit_text(text: str) -> List[Dict]:
 
     # If no bullet items found, try to split by blank lines or by field labels as fallback.
     if not items:
-        # Split by double newline
         blocks = re.split(r'\n\s*\n', text)
         for block in blocks:
             if re.search(r'CWE:', block, re.IGNORECASE):
                 items.append(block)
 
     for item in items:
-        # Extract fields using regex
-        cwe = _extract_field(item, r'CWE\s*:\s*(.+)')
-        severity = _extract_field(item, r'Severity\s*:\s*(.+)')
-        vuln_code = _extract_field(item, r'Vulnerable Code\s*:\s*(.+)')
-        risk = _extract_field(item, r'Risk\s*:\s*(.+)')
-        fix = _extract_field(item, r'Fix\s*:\s*(.+)')
+        # Extract fields using regex, default to "N/A" if missing
+        cwe = _extract_field(item, r'CWE\s*:\s*(.+)') or "N/A"
+        severity = _extract_field(item, r'Severity\s*:\s*(.+)') or "N/A"
+        vuln_code = _extract_field(item, r'Vulnerable Code\s*:\s*(.+)') or "N/A"
+        risk = _extract_field(item, r'Risk\s*:\s*(.+)') or "N/A"
+        fix = _extract_field(item, r'Fix\s*:\s*(.+)') or "N/A"
 
         # If at least CWE and severity are present, consider it valid
-        if cwe or severity:
+        if cwe != "N/A" or severity != "N/A":
             vulns.append({
-                "cwe": cwe.strip() if cwe else "N/A",
-                "severity": severity.strip() if severity else "N/A",
-                "vulnerable_code": vuln_code.strip()[:50] if vuln_code else "N/A",
-                "risk": risk.strip() if risk else "N/A",
-                "fix": fix.strip() if fix else "N/A"
+                "cwe": cwe,
+                "severity": severity,
+                "vulnerable_code": vuln_code[:50],
+                "risk": risk,
+                "fix": fix
             })
 
     return vulns
@@ -363,9 +363,17 @@ def _run_llm(user_prompt: str, model: str) -> str:
         "temperature": 0.1,
         "max_tokens": MAX_TOKENS,
     }
-    resp = requests.post(LLM_ENDPOINT, headers=headers, json=payload, timeout=TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"].strip()
+    try:
+        resp = requests.post(LLM_ENDPOINT, headers=headers, json=payload, timeout=TIMEOUT)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"].strip()
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+            logger.error(f"Model {model} not found (404). Skipping.")
+        raise
+    except Exception as e:
+        logger.error(f"LLM request failed: {e}")
+        raise
 
 def scan_chunk_with_llm(chunk: str, language: str, idx: int, total: int) -> List[Dict]:
     user_prompt = f"Language: {language}\n\n<code>\n{chunk}\n</code>"
@@ -413,7 +421,7 @@ def merge_and_deduplicate(all_vulns: List[Dict]) -> List[Dict]:
     return merged
 
 # -------------------------------------------------------------------
-# Format output as a text‑based list
+# Format output as a text‑based list (returns a string)
 # -------------------------------------------------------------------
 def _format_vulnerabilities(vulns: List[Dict], most_critical: Dict) -> str:
     lines = []
@@ -446,21 +454,39 @@ def _format_vulnerabilities(vulns: List[Dict], most_critical: Dict) -> str:
     return "\n".join(lines)
 
 # -------------------------------------------------------------------
-# Main entry point
+# Main entry point – returns dict with text_report
 # -------------------------------------------------------------------
-def analyze_code(code: str, language: str) -> str:
+def analyze_code(code: str, language: str) -> Dict[str, Any]:
     if not LLM_API_KEY:
-        return "Error: OPENROUTER_API_KEY not set. Please provide an API key."
+        return {
+            "status": "error",
+            "error_code": "NO_API_KEY",
+            "vulnerabilities": [],
+            "most_critical": {"name": "Error", "details": "API key missing."},
+            "text_report": "Error: OPENROUTER_API_KEY not set."
+        }
 
     code = sanitize_code(code)
     if len(code) > MAX_CODE_LENGTH:
-        return "Error: Code too long. Maximum allowed length is {} characters.".format(MAX_CODE_LENGTH)
+        return {
+            "status": "error",
+            "error_code": "CODE_TOO_LONG",
+            "vulnerabilities": [],
+            "most_critical": {"name": "Error", "details": "Code too long."},
+            "text_report": f"Error: Code too long. Maximum allowed length is {MAX_CODE_LENGTH} characters."
+        }
 
     code_hash = hashlib.sha256(code.encode()).hexdigest()
     cached = get_cached_result(code_hash)
     if cached:
         logger.info("Returning cached result")
-        return _format_vulnerabilities(cached.get("vulnerabilities", []), cached.get("most_critical", {}))
+        # Ensure cached result has text_report
+        if "text_report" not in cached:
+            cached["text_report"] = _format_vulnerabilities(
+                cached.get("vulnerabilities", []),
+                cached.get("most_critical", {})
+            )
+        return cached
 
     # 1. Regex scan (fast)
     regex_vulns = regex_scan_code(code)
@@ -484,10 +510,14 @@ def analyze_code(code: str, language: str) -> str:
     all_vulns = regex_vulns + llm_vulns
     merged = merge_and_deduplicate(all_vulns)
 
+    most_critical = _most_critical(merged)
+    text_report = _format_vulnerabilities(merged, most_critical)
+
     result = {
         "status": "success",
         "vulnerabilities": merged,
-        "most_critical": _most_critical(merged)
+        "most_critical": most_critical,
+        "text_report": text_report
     }
     set_cached_result(code_hash, result)
-    return _format_vulnerabilities(result["vulnerabilities"], result["most_critical"])
+    return result
