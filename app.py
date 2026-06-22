@@ -240,13 +240,30 @@ def signup_page():
 def reset_password_page():
     return render_template("reset-password.html")
 
+# ─────────────────────────────────────────────
+# MODIFIED: /scan route with dependency support
+# ─────────────────────────────────────────────
+
 @app.route("/scan", methods=["POST"])
 @limiter.limit("10 per minute")
 @require_auth
 def scan(user):
     try:
-        language = request.form.get("language", "").strip().lower()
-        code = request.form.get("code", "")
+        # Support both form-data and JSON
+        if request.is_json:
+            data = request.get_json()
+            language = data.get("language", "").strip().lower()
+            code = data.get("code", "")
+            dependencies = data.get("dependencies")  # can be a list or a string
+        else:
+            language = request.form.get("language", "").strip().lower()
+            code = request.form.get("code", "")
+            deps_str = request.form.get("dependencies", "")
+            if deps_str:
+                # assume newline-separated package==version lines
+                dependencies = [line.strip() for line in deps_str.splitlines() if line.strip()]
+            else:
+                dependencies = None
 
         ALLOWED_LANGUAGES = {
             "python", "javascript", "typescript", "java",
@@ -281,8 +298,8 @@ def scan(user):
                 "audit_summary": msg
             }), 422
 
-        # Call the new analyze_code that returns {status, vulnerabilities, most_critical}
-        result = analyze_code(code, language)
+        # Call the updated analyze_code with dependencies
+        result = analyze_code(code, language, dependencies=dependencies)
 
         # Handle errors from the analysis engine
         if result.get("status") == "error":
