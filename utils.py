@@ -20,10 +20,10 @@ PRIMARY_MODEL = "cohere/north-mini-code:free"
 FALLBACK_MODEL = "meta-llama/llama-3-8b-instruct:free"
 
 REQUIRED_KEYS = {"cwe", "severity", "vulnerable_code", "risk", "fix"}
-MAX_CODE_LENGTH = 100000
-CHUNK_LINES = 60                  # balanced for speed
-MAX_TOKENS = 4096                 # allow long responses
-TIMEOUT = 30                      # seconds
+MAX_CODE_LENGTH = 50000
+CHUNK_LINES = 350                  # balanced for speed
+MAX_TOKENS = 3000                 # allow long responses
+TIMEOUT = 40                      # seconds
 MAX_WORKERS = 5                   # parallel chunks
 CACHE_FILE = "/tmp/scan_cache.pkl"
 
@@ -47,6 +47,9 @@ _SYSTEM_PROMPT = (
     "  {\"cwe\":\"CWE-89: SQL Injection\",\"severity\":\"9/10\",\"vulnerable_code\":\"query = f\\\"SELECT ...\",\"risk\":\"SQL injection\",\"fix\":\"Use parameterised queries\"},\n"
     "  {\"cwe\":\"CWE-78: OS Command Injection\",\"severity\":\"9/10\",\"vulnerable_code\":\"os.system(f'ping {host}')\",\"risk\":\"Remote code execution\",\"fix\":\"Use subprocess with shell=False\"}\n"
     "]"
+    "CRITICAL: Do not skip or truncate any findings. If there are 30+ vulnerabilities, "
+    "you must list EVERY SINGLE ONE of them. Do not combine them. Output the complete "
+    "untruncated JSON array."
 )
 
 # -------------------------------------------------------------------
