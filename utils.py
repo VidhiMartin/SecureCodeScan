@@ -16,7 +16,7 @@ LLM_API_KEY = os.getenv("OPENROUTER_API_KEY")
 LLM_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
 # Verified free models (both work with OpenRouter free tier)
-PRIMARY_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+PRIMARY_MODEL = "cohere/north-mini-code:free"
 FALLBACK_MODEL = "meta-llama/llama-3-8b-instruct:free"
 
 REQUIRED_KEYS = {"cwe", "severity", "vulnerable_code", "risk", "fix"}
