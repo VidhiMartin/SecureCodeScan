@@ -548,16 +548,24 @@ def analyze_code(code: str, language: str = "python", dependencies: Optional[Lis
     all_vulns = regex_vulns + dep_vulns + llm_vulns
     merged = merge_and_deduplicate(all_vulns)
 
-    # 6. Format CWE/CVE
+    # 6. Format CWE/CVE – produce a clean "CWE/CVE" label
     for v in merged:
+        # Ensure we have a 'cve' field
         if "cve" not in v:
             v["cve"] = "N/A"
         cwe_part = v.get("cwe", "N/A")
         cve_part = v.get("cve", "N/A")
+
+        # If we have a valid CVE, use it; otherwise extract the CWE ID
         if cve_part != "N/A" and cve_part != "CVE-unknown":
-            v["cwe"] = f"{cwe_part} / {cve_part}"
+            v["cwe"] = f"CVE: {cve_part}"
         else:
-            v["cwe"] = cwe_part
+            # Extract CWE number from the existing CWE string (e.g., "CWE-352: CSRF" -> "CWE-352")
+            cwe_match = re.search(r'(CWE-\d+)', cwe_part)
+            if cwe_match:
+                v["cwe"] = f"CWE: {cwe_match.group(1)}"
+            else:
+                v["cwe"] = f"CWE: {cwe_part}"  # fallback
 
     result = {
         "status": "success",
