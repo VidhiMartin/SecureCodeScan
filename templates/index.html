@@ -773,14 +773,15 @@
                 <label for="code"><i class="fas fa-terminal"></i> Source Code Input</label>
                 <textarea id="code" rows="14" placeholder="// Paste source code here for auditing..."></textarea>
 
-            
+                <!-- No Dependencies field – backend reads requirements.txt automatically -->
+
                 <button type="button" id="submitBtn" onclick="handleScan()">
                     <i class="fas fa-shield-virus"></i> Initialize Security Scan
                 </button>
             </div>
         </div>
 
-        <!-- NEW: Results section that lists all vulnerabilities -->
+        <!-- Results section that lists all vulnerabilities -->
         <div class="result-card" id="result-card">
             <div class="result-header">
                 <i class="fas fa-search"></i> Audit Complete: <span id="vuln-count"></span> Vulnerabilities Found
@@ -890,12 +891,7 @@
             const formData = new FormData();
             formData.append("language", language);
             formData.append("code", code);
-
-            // 🔥 NEW: Add dependencies if provided
-            const deps = document.getElementById("dependencies").value.trim();
-            if (deps) {
-                formData.append("dependencies", deps);
-            }
+            // No dependencies field – backend will read requirements.txt automatically
 
             const response = await fetch("/scan", {
                 method: "POST",
