@@ -548,24 +548,20 @@ def analyze_code(code: str, language: str = "python", dependencies: Optional[Lis
     all_vulns = regex_vulns + dep_vulns + llm_vulns
     merged = merge_and_deduplicate(all_vulns)
 
-    # 6. Format CWE/CVE – produce a clean "CWE/CVE" label
+    # 6. Format CWE/CVE – output just the ID (e.g., "CWE-352" or "CVE-2018-1000656")
     for v in merged:
-        # Ensure we have a 'cve' field
-        if "cve" not in v:
-            v["cve"] = "N/A"
-        cwe_part = v.get("cwe", "N/A")
-        cve_part = v.get("cve", "N/A")
-
-        # If we have a valid CVE, use it; otherwise extract the CWE ID
-        if cve_part != "N/A" and cve_part != "CVE-unknown":
-            v["cwe"] = f"CVE: {cve_part}"
+        raw = v.get("cwe", "N/A")
+        # Try to extract a CVE (CVE-YYYY-NNNNN)
+        cve_match = re.search(r'(CVE-\d{4}-\d+)', raw)
+        if cve_match:
+            v["cwe"] = cve_match.group(1)
         else:
-            # Extract CWE number from the existing CWE string (e.g., "CWE-352: CSRF" -> "CWE-352")
-            cwe_match = re.search(r'(CWE-\d+)', cwe_part)
+            # Try to extract a CWE (CWE-NNN)
+            cwe_match = re.search(r'(CWE-\d+)', raw)
             if cwe_match:
-                v["cwe"] = f"CWE: {cwe_match.group(1)}"
+                v["cwe"] = cwe_match.group(1)
             else:
-                v["cwe"] = f"CWE: {cwe_part}"  # fallback
+                v["cwe"] = raw   # fallback
 
     result = {
         "status": "success",
