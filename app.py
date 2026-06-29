@@ -14,7 +14,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
-from utils import analyze_code
+from utils import analyze_code, is_language_match   # <-- added is_language_match
 
 
 # --- Security Configuration & Logging ---
@@ -111,16 +111,7 @@ EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
 def validate_email(email: str) -> bool:
     return bool(email and EMAIL_RE.match(email) and len(email) <= 254)
 
-def validate_language_match(code: str, lang: str):
-    code_lower = code.lower()
-    if lang == "python":
-        # Word boundaries prevent false positives like "reconst", "letter"
-        if re.search(r'\bconst\b', code_lower) or re.search(r'\blet\b', code_lower) or "console.log" in code_lower:
-            return False, "Snippet appears to be JavaScript/TypeScript, but environment is Python."
-    if lang in ("javascript", "typescript"):
-        if re.search(r'\bdef\b', code_lower) and ":" in code_lower:
-            return False, "Snippet appears to be Python, but environment is set to JavaScript/TypeScript."
-    return True, ""
+# OLD validate_language_match was REMOVED – now handled by utils.is_language_match
 
 # ─────────────────────────────────────────────
 # MFA Routes (Now with hashed email doc IDs)
@@ -290,7 +281,8 @@ def scan(user):
                 "audit_summary": f"Payload exceeds limit of {MAX_CODE_SIZE} characters."
             }), 413
 
-        is_match, msg = validate_language_match(code, language)
+        # Language match check – now delegated to utils
+        is_match, msg = is_language_match(code, language)
         if not is_match:
             return jsonify({
                 "status": "REJECTED",
