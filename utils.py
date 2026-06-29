@@ -30,12 +30,8 @@ MAX_WORKERS = 1
 
 llm_semaphore = threading.Semaphore(MAX_WORKERS)
 
-# ---------- Language match detection (moved from app.py) ----------
+# ---------- Language match detection ----------
 def is_language_match(code: str, declared_lang: str) -> Tuple[bool, str]:
-    """
-    Return (True, "") if the code matches the declared language,
-    or (False, error_message) if it appears to be a different language.
-    """
     def strip_non_code(text: str) -> str:
         text = re.sub(r'#.*?$', '', text, flags=re.M)
         text = re.sub(r'"""[\s\S]*?"""', '', text)
@@ -45,7 +41,6 @@ def is_language_match(code: str, declared_lang: str) -> Tuple[bool, str]:
         return text
 
     clean = strip_non_code(code).lower()
-
     if declared_lang == "python":
         if re.search(r'\bconst\b', clean) or re.search(r'\blet\b', clean) or "console.log" in clean:
             return False, "Snippet appears to be JavaScript/TypeScript, but environment is Python."
@@ -243,6 +238,26 @@ def get_cached_result(code_hash: str) -> Optional[Dict]:
 
 def set_cached_result(code_hash: str, result: Dict) -> None:
     pass
+
+# ---------- NEW: Parse requirements.txt ----------
+def parse_requirements_file(filepath: str = "requirements.txt") -> List[str]:
+    """
+    Read a requirements.txt file and return a list of 'package==version' strings.
+    Returns empty list if file not found or unparseable.
+    """
+    try:
+        with open(filepath, 'r') as f:
+            lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        deps = []
+        for line in lines:
+            # Remove extras like ;python_version<"3.8"
+            if ';' in line:
+                line = line.split(';')[0].strip()
+            if '==' in line:
+                deps.append(line)
+        return deps
+    except FileNotFoundError:
+        return []
 
 # ---------- NVD & OSV ----------
 def query_nvd(package: str, version: Optional[str] = None) -> List[Dict]:
@@ -504,9 +519,16 @@ def analyze_code(code: str, language: str = "python", dependencies: Optional[Lis
     regex_vulns = regex_scan_code(code)
     logger.info(f"Regex found {len(regex_vulns)} issues")
 
-    # 2. Dependency scan – only if explicit versions are provided
+    # 2. Dependency scan – automatically read requirements.txt if no dependencies provided
     dep_vulns = []
     dep_context = ""
+
+    if dependencies is None and language == "python":
+        # Try to read requirements.txt from the current directory
+        deps_from_file = parse_requirements_file()
+        if deps_from_file:
+            dependencies = deps_from_file
+            logger.info(f"Found requirements.txt with {len(dependencies)} packages.")
 
     if dependencies:
         for dep in dependencies:
@@ -523,10 +545,9 @@ def analyze_code(code: str, language: str = "python", dependencies: Optional[Lis
         dep_context = build_dependency_context(dep_vulns)
     else:
         # No explicit dependencies with versions; we skip NVD/OSV.
-        # Optionally log extracted imports for informational purposes.
         extracted = extract_imports(code)
         if extracted:
-            logger.info(f"Extracted imports: {extracted} – supply version info to scan dependencies.")
+            logger.info(f"Extracted imports: {extracted} – no versions found, skipping CVE scan.")
 
     # 3. LLM scan
     llm_vulns = []
@@ -551,17 +572,15 @@ def analyze_code(code: str, language: str = "python", dependencies: Optional[Lis
     # 6. Format CWE/CVE – output just the ID (e.g., "CWE-352" or "CVE-2018-1000656")
     for v in merged:
         raw = v.get("cwe", "N/A")
-        # Try to extract a CVE (CVE-YYYY-NNNNN)
         cve_match = re.search(r'(CVE-\d{4}-\d+)', raw)
         if cve_match:
             v["cwe"] = cve_match.group(1)
         else:
-            # Try to extract a CWE (CWE-NNN)
             cwe_match = re.search(r'(CWE-\d+)', raw)
             if cwe_match:
                 v["cwe"] = cwe_match.group(1)
             else:
-                v["cwe"] = raw   # fallback
+                v["cwe"] = raw
 
     result = {
         "status": "success",
