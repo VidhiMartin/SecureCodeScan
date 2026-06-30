@@ -97,8 +97,23 @@ _SYSTEM_PROMPT = (
 def regex_scan_code(code: str) -> List[Dict]:
     vulns = []
     lines = code.splitlines()
+
+    # FIX (#4): the original SQLi pattern only fired on string concatenation
+    # with '+' (e.g. execute("..." + var)). It missed f-string queries such as
+    # f"SELECT content FROM notes WHERE id={note_id}", which is the dominant
+    # pattern in modern Python code. This additional pattern catches f-strings
+    # that contain a SQL keyword together with a {..} interpolation, on the
+    # same line. (Queries split across multiple f-string lines and then
+    # executed via a variable are still out of reach for a per-line regex
+    # scanner -- that case is left to the LLM pass, as before.)
+    sql_fstring_pattern = re.compile(
+        r'f["\'][^"\']*\b(SELECT|INSERT|UPDATE|DELETE)\b[^"\']*\{[^}]+\}',
+        re.IGNORECASE,
+    )
+
     for idx, line in enumerate(lines, start=1):
-        if re.search(r'(execute|executemany|query)\s*\(.*?\+.*?\)', line, re.IGNORECASE):
+        if re.search(r'(execute|executemany|query)\s*\(.*?\+.*?\)', line, re.IGNORECASE) \
+                or sql_fstring_pattern.search(line):
             vulns.append({"cwe": "CWE-89: SQL Injection", "severity": "9/10",
                           "vulnerable_code": line.strip()[:50], "line_number": idx,
                           "risk": "SQL injection allows database compromise.",
@@ -199,6 +214,23 @@ def sanitize_code(code: str) -> str:
         code = code.replace(phrase, "")
     return code
 
+
+# FIX (#1): unified severity parser. The old inline regex `(\d+)/10` only
+# understood the LLM/regex-scanner's "X/10" convention. Dependency findings
+# from NVD/OSV report a raw CVSS float (e.g. "9.8", no "/10" suffix), which
+# silently parsed to 0 and made real high-severity CVEs sort to the bottom
+# and never qualify as `most_critical`. This helper handles both formats.
+def _severity_score(severity: Any) -> float:
+    s = str(severity) if severity is not None else ""
+    m = re.search(r'(\d+(?:\.\d+)?)\s*/\s*10', s)
+    if m:
+        return float(m.group(1))
+    m = re.search(r'(\d+(?:\.\d+)?)', s)
+    if m:
+        return float(m.group(1))
+    return 0.0
+
+
 def merge_and_deduplicate(all_vulns: List[Dict]) -> List[Dict]:
     seen = {}
     for v in all_vulns:
@@ -207,7 +239,19 @@ def merge_and_deduplicate(all_vulns: List[Dict]) -> List[Dict]:
                 v[req] = "N/A"
         if isinstance(v.get("line_number"), str):
             v["line_number"] = int(v["line_number"]) if v["line_number"].isdigit() else 0
-        key = (v.get("line_number", 0), v.get("cwe", ""))
+
+        # FIX (#2): dependency findings (NVD/OSV) always have line_number=0
+        # and often cwe="N/A" (CWE isn't always tagged upstream). Keying
+        # purely on (line_number, cwe) collapsed distinct CVEs from
+        # different packages into a single entry, silently dropping real
+        # findings. Only widen the key for the line_number==0 case so the
+        # dedup behaviour for normal line-based (regex/LLM) findings is
+        # unchanged.
+        if v.get("line_number", 0) == 0:
+            key = (v.get("line_number", 0), v.get("cwe", ""), v.get("cve", "") or v.get("vulnerable_code", ""))
+        else:
+            key = (v.get("line_number", 0), v.get("cwe", ""))
+
         if key not in seen:
             seen[key] = v
         else:
@@ -217,13 +261,10 @@ def merge_and_deduplicate(all_vulns: List[Dict]) -> List[Dict]:
             elif v.get("risk") in ["Regex match", "Review and sanitize input", "N/A"]:
                 pass
             else:
-                def score(s):
-                    m = re.search(r'(\d+)/10', s)
-                    return int(m.group(1)) if m else 0
-                if score(v.get("severity", "0/10")) > score(existing.get("severity", "0/10")):
+                if _severity_score(v.get("severity", "0/10")) > _severity_score(existing.get("severity", "0/10")):
                     seen[key] = v
     merged = list(seen.values())
-    merged.sort(key=lambda v: int(re.search(r'(\d+)/10', v.get("severity", "0/10")).group(1)) if re.search(r'(\d+)/10', v.get("severity", "0/10")) else 0, reverse=True)
+    merged.sort(key=lambda v: _severity_score(v.get("severity", "0/10")), reverse=True)
     return merged
 
 def _most_critical(vulns: List[Dict]) -> Dict:
@@ -391,7 +432,12 @@ def call_llm(code: str, dependency_context: str = "") -> List[Dict]:
         ],
         "temperature": 0.0,
         "max_tokens": MAX_TOKENS,
-        "stop": ["```", "\n\n"]
+        # FIX (#3): removed "\n\n" from the stop sequence. The prompt demands
+        # one JSON object per vulnerable line with no omissions, but a blank
+        # line anywhere in the model's formatted output (common when listing
+        # many objects) would cut the response off mid-array, truncating
+        # real findings. "```" alone is still a safe stop marker.
+        "stop": ["```"]
     }
     with llm_semaphore:
         try:
@@ -460,7 +506,8 @@ def verify_vulnerabilities(code: str, initial_vulns: List[Dict], dep_context: st
         ],
         "temperature": 0.0,
         "max_tokens": MAX_TOKENS,
-        "stop": ["```", "\n\n"]
+        # FIX (#3): same reasoning as call_llm above.
+        "stop": ["```"]
     }
     try:
         resp = requests.post(LLM_ENDPOINT, headers=headers, json=payload, timeout=TIMEOUT)
