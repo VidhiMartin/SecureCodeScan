@@ -1,5 +1,8 @@
 SecureCodeScan
-I revived this project after letting it sit for a year—an AI-powered vulnerability scanner that covers 10 languages (Python, JavaScript, Go, Rust, Java, and a few more). The goal is simple: catch security issues early without slowing down a developer's workflow.
+
+I revived this project after letting it sit for a year—an AI-powered vulnerability scanner that covers 10 languages (Python, JavaScript, Go, Rust, Java, and a few more). 
+
+The goal is simple: catch security issues early without slowing down a developer's workflow.
 
 How it works:
 
