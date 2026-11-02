@@ -19,8 +19,8 @@ NVD_API_KEY = os.getenv("NVE_KEY") or os.getenv("NVD_KEY")
 
 LLM_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
-PRIMARY_MODEL = "google/gemini-2.0-flash-exp:free"
-FALLBACK_MODEL = "qwen/qwen3-coder-480b-a35b:free"
+PRIMARY_MODEL = "openrouter/free"
+FALLBACK_MODEL = "openrouter/free"
 
 REQUIRED_KEYS = {"cwe", "severity", "vulnerable_code", "risk", "fix", "line_number"}
 MAX_CODE_LENGTH = 15000
@@ -200,13 +200,6 @@ def regex_scan_code(code: str) -> List[Dict]:
 
 # ---------- Helpers ----------
 def sanitize_code(code: str) -> str:
-    """
-    Only strip control characters. Do NOT strip words like 'override',
-    'disregard', 'system prompt' etc. — those legitimately appear in real
-    code (e.g. 'MASTER_OVERRIDE_TOKEN', '@Override', variable names) and
-    stripping them silently breaks both the regex scanner and the LLM scan.
-    Prompt-injection is handled via the system prompt instead.
-    """
     if code is None:
         return ""
     code = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', code)
@@ -253,27 +246,25 @@ def merge_and_deduplicate(all_vulns: List[Dict]) -> List[Dict]:
     merged.sort(key=lambda v: _severity_score(v.get("severity", "0/10")), reverse=True)
     return merged
 
+
 def _most_critical(vulns: List[Dict]) -> Dict:
     if not vulns:
         return {"name": "No issues found", "severity": "N/A", "cwe": "N/A",
                 "vulnerable_code": "N/A", "line_number": 0, "risk": "No security issues detected.", "fix": "N/A"}
     return vulns[0]
 
+
 @lru_cache(maxsize=128)
 def get_cached_result(code_hash: str) -> Optional[Dict]:
     return None
 
+
 def set_cached_result(code_hash: str, result: Dict) -> None:
     pass
 
+
 # ---------- Parse requirements.txt ----------
 def parse_requirements_file(filepath: str = "requirements.txt") -> List[str]:
-    """
-    Read a requirements.txt file and return a list of 'package==version' strings.
-    Returns empty list if file not found or unparseable.
-    Also tries the directory of this module (so it works when CWD differs,
-    e.g. on Vercel).
-    """
     candidates = [filepath]
     try:
         module_dir = os.path.dirname(os.path.abspath(__file__))
@@ -299,6 +290,7 @@ def parse_requirements_file(filepath: str = "requirements.txt") -> List[str]:
             logger.warning(f"Failed to read {path}: {e}")
             continue
     return []
+
 
 # ---------- NVD & OSV ----------
 def query_nvd(package: str, version: Optional[str] = None) -> List[Dict]:
@@ -352,6 +344,7 @@ def query_nvd(package: str, version: Optional[str] = None) -> List[Dict]:
         logger.warning(f"NVD query failed for {package}: {e}")
         return []
 
+
 def query_osv(package: str, version: Optional[str] = None) -> List[Dict]:
     url = "https://api.osv.dev/v1/query"
     payload = {
@@ -391,6 +384,7 @@ def query_osv(package: str, version: Optional[str] = None) -> List[Dict]:
         logger.warning(f"OSV query failed for {package}: {e}")
         return []
 
+
 def extract_imports(code: str) -> List[str]:
     try:
         tree = ast.parse(code)
@@ -406,6 +400,7 @@ def extract_imports(code: str) -> List[str]:
     except Exception:
         return []
 
+
 def build_dependency_context(dependency_vulns: List[Dict]) -> str:
     if not dependency_vulns:
         return ""
@@ -417,15 +412,14 @@ def build_dependency_context(dependency_vulns: List[Dict]) -> str:
         context += f"- {cwe} / {cve}: {risk}\n"
     return context + "\nUse this information to help identify related vulnerabilities in the code.\n"
 
+
 # ---------- JSON extraction helper ----------
 def _extract_json_array(raw: str) -> List[Dict]:
-    """Robustly pull a JSON array out of an LLM response."""
     if not raw:
         return []
     cleaned = re.sub(r'```(?:json)?\s*', '', raw)
     cleaned = cleaned.replace('```', '').strip()
 
-    # Direct parse
     try:
         data = json.loads(cleaned)
         if isinstance(data, list):
@@ -435,7 +429,6 @@ def _extract_json_array(raw: str) -> List[Dict]:
     except Exception:
         pass
 
-    # Walk every '[' until one parses
     start = cleaned.find('[')
     while start != -1:
         end = cleaned.rfind(']')
@@ -449,6 +442,7 @@ def _extract_json_array(raw: str) -> List[Dict]:
                 pass
         start = cleaned.find('[', start + 1)
     return []
+
 
 # ---------- LLM call ----------
 def _llm_request(model: str, system_prompt: str, user_content: str, timeout: int = TIMEOUT) -> List[Dict]:
@@ -464,10 +458,6 @@ def _llm_request(model: str, system_prompt: str, user_content: str, timeout: int
         ],
         "temperature": 0.0,
         "max_tokens": MAX_TOKENS,
-        # NOTE: stop sequence intentionally omitted. The previous "```" stop
-        # marker was truncating the JSON array whenever the model wrapped its
-        # answer in a code fence (which it almost always does), resulting in
-        # empty findings even for clearly vulnerable code.
     }
     try:
         start = time.time()
@@ -500,6 +490,7 @@ def call_llm(code: str, dependency_context: str = "") -> List[Dict]:
             findings = _llm_request(FALLBACK_MODEL, system_prompt, user_content, timeout=TIMEOUT + 5)
         return findings
 
+
 # ---------- Verification ----------
 def verify_vulnerabilities(code: str, initial_vulns: List[Dict], dep_context: str, attempt: int = 1) -> List[Dict]:
     if len(initial_vulns) >= 25:
@@ -528,9 +519,9 @@ def verify_vulnerabilities(code: str, initial_vulns: List[Dict], dep_context: st
         if (v.get("line_number"), v.get("cwe")) not in existing
     ]
     if len(combined) == len(initial_vulns):
-        # Nothing new; avoid pointless recursion
         return initial_vulns
     return verify_vulnerabilities(code, combined, dep_context, attempt + 1)
+
 
 # ---------- Main orchestrator ----------
 def analyze_code(code: str, language: str = "python", dependencies: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -572,11 +563,9 @@ def analyze_code(code: str, language: str = "python", dependencies: Optional[Lis
     if cached:
         return cached
 
-    # 1. Regex scan
     regex_vulns = regex_scan_code(code)
     logger.info(f"Regex found {len(regex_vulns)} issues")
 
-    # 2. Dependency scan
     dep_vulns = []
     dep_context = ""
 
@@ -604,7 +593,6 @@ def analyze_code(code: str, language: str = "python", dependencies: Optional[Lis
         if extracted:
             logger.info(f"Extracted imports: {extracted} – no versions found, skipping CVE scan.")
 
-    # 3. LLM scan
     llm_vulns = []
     if LLM_API_KEY:
         logger.info("Scanning entire code with LLM (single chunk)")
@@ -615,12 +603,10 @@ def analyze_code(code: str, language: str = "python", dependencies: Optional[Lis
         else:
             logger.warning("LLM returned empty list.")
 
-    # 4. Verification
     if len(llm_vulns) < 25:
         llm_vulns = verify_vulnerabilities(code, llm_vulns, dep_context, attempt=1)
         logger.info(f"After verification: {len(llm_vulns)} LLM issues")
 
-    # 5. Combine and deduplicate
     all_vulns = regex_vulns + dep_vulns + llm_vulns
     logger.info(
         f"Pre-merge totals: regex={len(regex_vulns)} deps={len(dep_vulns)} llm={len(llm_vulns)}"
@@ -628,7 +614,6 @@ def analyze_code(code: str, language: str = "python", dependencies: Optional[Lis
     merged = merge_and_deduplicate(all_vulns)
     logger.info(f"After merge/dedup: {len(merged)} unique findings")
 
-    # 6. Format CWE/CVE – output just the ID
     for v in merged:
         raw = v.get("cwe", "N/A")
         cve_match = re.search(r'(CVE-\d{4}-\d+)', raw)
