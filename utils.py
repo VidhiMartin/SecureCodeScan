@@ -68,7 +68,7 @@ _SYSTEM_PROMPT = (
     "**Data-flow rule**: A vulnerable *sink* is still vulnerable if the tainted "
     "value was first assigned to a local variable on an earlier line. For example "
     "`uid = request.args.get('id')` followed three lines later by "
-    "`cur.execute(f'SELECT ... {uid}')` IS a SQL injection, even though the sink "
+    "`cur.execute(f'SELECT ... {{uid}}')` IS a SQL injection, even though the sink "
     "line does not mention `request` directly. Trace local variables back to their "
     "source. Report the sink line, not the assignment line.\n\n"
     "**IDOR rule**: If a resource is fetched by an ID that came from `request.*`, "
