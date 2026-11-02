@@ -14,7 +14,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
-from utils import analyze_code, is_language_match   # <-- added is_language_match
+from utils import analyze_code, is_language_match
 
 
 # --- Security Configuration & Logging ---
@@ -267,7 +267,7 @@ def scan(user):
                 "audit_summary": "Unsupported language specified."
             }), 422
 
-        if not code.strip():
+        if not code or not code.strip():
             return jsonify({
                 "status": "REJECTED",
                 "error_code": "EMPTY_INPUT",
@@ -313,7 +313,10 @@ def scan(user):
             })
 
         # Return the list of vulnerabilities to the frontend
-        logger.info(f"Scan completed for uid={user.get('uid', 'unknown')} lang={language}")
+        logger.info(
+            f"Scan completed for uid={user.get('uid', 'unknown')} "
+            f"lang={language} total={len(result['vulnerabilities'])}"
+        )
         return jsonify({
             "vulnerabilities": result["vulnerabilities"],
             "total": len(result["vulnerabilities"])
