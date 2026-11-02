@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <title>SECURE CODE SCANNER | Advanced LLM Code Auditor</title>
-    
+
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css"/>
-    
+
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    
+
     <!-- Page‑specific styles -->
     <style>
         .nav-header {
@@ -107,7 +107,7 @@
             backdrop-filter: blur(10px);
         }
 
-        /* Vulnerability card styles (new) */
+        /* Vulnerability card styles */
         .vuln-card {
             background: #010409;
             border: 1px solid #334155;
@@ -146,8 +146,8 @@
             word-break: break-word;
         }
     </style>
-    
-    <!-- Global style.css inlined (all styles from your style.css file) -->
+
+    <!-- Global style.css inlined -->
     <style>
         /* =========================
            VARIABLES & BASE
@@ -165,8 +165,7 @@
             margin: 0;
             font-family: 'Inter', sans-serif;
             background-color: var(--bg-dark);
-            /* Cyber-Grid Effect */
-            background-image: 
+            background-image:
                 linear-gradient(rgba(14, 165, 233, 0.05) 1px, transparent 1px),
                 linear-gradient(90deg, rgba(14, 165, 233, 0.05) 1px, transparent 1px);
             background-size: 50px 50px;
@@ -176,7 +175,6 @@
             line-height: 1.6;
         }
 
-        /* Background Glow Aura */
         body::before {
             content: "";
             position: fixed;
@@ -252,7 +250,7 @@
         }
 
         /* =========================
-           FEATURE GRID (Perfectly Aligned)
+           FEATURE GRID
         ========================= */
         .feature-grid {
             display: grid;
@@ -271,7 +269,7 @@
             display: flex;
             flex-direction: column;
             justify-content: center;
-            min-height: 160px; /* Forces consistency */
+            min-height: 160px;
         }
 
         .feature-item:hover {
@@ -303,7 +301,6 @@
             overflow: hidden;
         }
 
-        /* Animated Scanner Line */
         .scanner-card::after {
             content: "";
             position: absolute;
@@ -397,7 +394,6 @@
             gap: 12px;
         }
 
-        /* Icons Color */
         .bullet-vuln { color: #f43f5e; }
         .bullet-cve { color: #fbbf24; }
         .bullet-patch { color: #10b981; }
@@ -407,10 +403,7 @@
             .headline { font-size: 2.5rem; }
         }
 
-
         /* LOGIN AND SIGNUP PAGE */
-
-        /* Auth Specific Styles */
         .auth-body {
             background: radial-gradient(circle at center, #0d1117 0%, #010409 100%);
             display: flex;
@@ -490,14 +483,13 @@
 
         .auth-footer a { color: #58a6ff; text-decoration: none; }
 
-
         /* --- Global Reset & Core Styling --- */
         html, body {
             margin: 0;
             padding: 0;
             width: 100%;
             height: 100%;
-            box-sizing: border-box; /* Crucial Global Reset */
+            box-sizing: border-box;
         }
 
         *, *:before, *:after {
@@ -517,18 +509,16 @@
         /* --- Redesigned Auth Body & Background --- */
         .auth-body {
             background-color: #010409;
-            /* Primary deep background gradient */
             background-image: radial-gradient(circle at center, #0d1117 0%, #010409 100%);
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            padding: 20px; /* Safety margin for small screens */
+            padding: 20px;
             position: relative;
             overflow: hidden;
         }
 
-        /* 🟢 NEW: Enhanced Background Pattern (Circuit/Network effect) */
         .auth-body::before {
             content: '';
             position: absolute;
@@ -536,7 +526,7 @@
             left: -100%;
             width: 300%;
             height: 300%;
-            background-image: 
+            background-image:
                 linear-gradient(rgba(56, 139, 253, 0.05) 1px, transparent 1px),
                 linear-gradient(90deg, rgba(56, 139, 253, 0.05) 1px, transparent 1px);
             background-size: 50px 50px;
@@ -551,13 +541,12 @@
             100% { transform: rotate(-15deg) translate(500px, 500px); }
         }
 
-        /* --- Container & Card (Fixing Containment) --- */
         .auth-container {
             display: flex;
             justify-content: center;
             align-items: center;
             width: 100%;
-            z-index: 10; /* Above the background pattern */
+            z-index: 10;
         }
 
         .auth-card {
@@ -566,15 +555,14 @@
             border: 1px solid rgba(56, 139, 253, 0.3);
             border-radius: 12px;
             width: 100%;
-            max-width: 440px; /* Precise constraint for bigger card */
-            padding: 2.5rem; /* Consistent internal spacing */
-            box-shadow: 
+            max-width: 440px;
+            padding: 2.5rem;
+            box-shadow:
                 0 0 30px rgba(0, 0, 0, 0.5),
                 0 0 50px rgba(56, 139, 253, 0.1);
             transition: box-shadow 0.3s ease;
         }
 
-        /* --- Auth Header --- */
         .auth-header {
             text-align: center;
             margin-bottom: 2rem;
@@ -599,12 +587,11 @@
             margin: 0;
         }
 
-        /* --- Input Groups (The Fix for Overflow) --- */
         .input-group {
             position: relative;
             margin-bottom: 1.25rem;
             width: 100%;
-            display: flex; /* Helps containment */
+            display: flex;
             align-items: center;
         }
 
@@ -617,8 +604,8 @@
         }
 
         .input-group input {
-            width: 100%; /* Now stays inside because of border-box reset */
-            padding: 14px 14px 14px 45px; /* Consistent padding with space for icon */
+            width: 100%;
+            padding: 14px 14px 14px 45px;
             background: #010409;
             border: 1px solid #30363d;
             border-radius: 6px;
@@ -634,12 +621,10 @@
             box-shadow: 0 0 10px rgba(88, 166, 255, 0.2);
         }
 
-        /* Placeholder color consistency */
         .input-group input::placeholder {
             color: #484f58;
         }
 
-        /* --- Buttons --- */
         .btn-primary {
             width: 100%;
             padding: 14px;
@@ -669,7 +654,6 @@
             opacity: 0.7;
         }
 
-        /* --- Footer --- */
         .auth-footer {
             margin-top: 1.75rem;
             text-align: center;
@@ -686,8 +670,6 @@
         .auth-footer a:hover {
             text-decoration: underline;
         }
-
-        /* LOADING */
     </style>
 </head>
 
@@ -726,14 +708,14 @@
             </div>
             <br>
             <div class="model-badge">
-                <i class="fas fa-microchip"></i> 
+                <i class="fas fa-microchip"></i>
                 <span>Powered by NVIDIA Nemotron-3 Super 120B</span>
             </div>
             <p class="subhead">
-                Enterprise-grade code security auditing powered by advanced LLM reasoning. 
+                Enterprise-grade code security auditing powered by advanced LLM reasoning.
                 Secure Code Scanner automates vulnerability detection and threat intelligence across 10+ programming languages.
             </p>
-            
+
             <div class="feature-grid">
                 <div class="feature-item">
                     <i class="fas fa-bug bullet-vuln"></i>
@@ -784,7 +766,7 @@
         <!-- Results section that lists all vulnerabilities -->
         <div class="result-card" id="result-card">
             <div class="result-header">
-                <i class="fas fa-search"></i> Audit Complete: <span id="vuln-count"></span> Vulnerabilities Found
+                <i class="fas fa-search"></i> Audit Complete: <span id="vuln-count">0</span> Vulnerabilities Found
             </div>
             <div id="vulnerabilities-list"></div>
         </div>
@@ -812,7 +794,6 @@
             return;
         }
         try {
-            // Refresh token; check_revoked=True on server handles revocation
             const token = await user.getIdToken(true);
             localStorage.setItem("token", token);
             document.getElementById("auth-overlay").style.display = "none";
@@ -836,6 +817,18 @@
         toast.textContent = "⚠ " + msg;
         toast.style.display = "block";
         setTimeout(() => { toast.style.display = "none"; }, 6000);
+    }
+
+    // Escape user-supplied / backend-supplied strings before injecting into innerHTML.
+    // Findings contain the scanned code verbatim — without this, a snippet like
+    // `<img src=x onerror=alert(1)>` would execute in this page.
+    function escapeHtml(s) {
+        return String(s == null ? "" : s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
     }
 
     let progressInterval = null;
@@ -871,6 +864,36 @@
         }, 450);
     }
 
+    // Normalize the backend response into an array of findings.
+    // Backend may return any of these shapes on a 2xx:
+    //   { vulnerabilities: [...], total: N }        → normal success
+    //   { name: "No issues found", severity: "N/A" } → legacy sentinel (treat as empty)
+    //   { cwe, severity, vulnerable_code, ... }      → single finding
+    //   []                                           → empty list
+    function normalizeFindings(data) {
+        if (!data) return [];
+
+        if (Array.isArray(data)) {
+            return data;
+        }
+
+        if (Array.isArray(data.vulnerabilities)) {
+            return data.vulnerabilities;
+        }
+
+        // Legacy "no issues" sentinel — must NOT be counted as a finding
+        if (data.name === "No issues found") {
+            return [];
+        }
+
+        // Looks like a single finding object
+        if (data.cwe || data.vulnerable_code || data.risk) {
+            return [data];
+        }
+
+        return [];
+    }
+
     // ── Scan Handler ───────────────────────────────────────
     async function handleScan() {
         const user = auth.currentUser;
@@ -891,7 +914,6 @@
             const formData = new FormData();
             formData.append("language", language);
             formData.append("code", code);
-            // No dependencies field – backend will read requirements.txt automatically
 
             const response = await fetch("/scan", {
                 method: "POST",
@@ -907,16 +929,26 @@
                     return;
                 }
 
+                // Backend may also return { status: "FAULT"|"REJECTED", audit_summary }
+                // with a 2xx (shouldn't happen with the new app.py, but be defensive).
+                if (data.status === "FAULT" || data.status === "REJECTED") {
+                    showError(data.audit_summary || "Scan failed. Please try again.");
+                    return;
+                }
+
+                const vulns = normalizeFindings(data);
+
                 const resultCard = document.getElementById("result-card");
                 const listEl = document.getElementById("vulnerabilities-list");
                 const countEl = document.getElementById("vuln-count");
 
                 listEl.innerHTML = "";
-                const vulns = data.vulnerabilities || (data.name ? [data] : []);
 
                 if (vulns.length === 0) {
                     countEl.textContent = "0";
-                    listEl.innerHTML = '<p style="color:#00ff88; text-align:center; padding:20px;">✅ No security issues detected.</p>';
+                    listEl.innerHTML =
+                        '<p style="color:#00ff88; text-align:center; padding:20px;">' +
+                        '✅ No security issues detected.</p>';
                     resultCard.style.display = "block";
                     resultCard.scrollIntoView({ behavior: "smooth" });
                     return;
@@ -926,16 +958,28 @@
 
                 let html = '';
                 vulns.forEach((v) => {
+                    // Findings don't have a `name` field — use `cwe` as the heading.
+                    const heading = (v.cwe && v.cwe !== "N/A")
+                        ? v.cwe
+                        : (v.name || "Vulnerability");
+                    const sev = (v.severity && v.severity !== "N/A")
+                        ? v.severity
+                        : "N/A";
+                    const loc = (v.line_number !== undefined && v.line_number !== null && v.line_number !== 0)
+                        ? `<div class="detail-row"><strong>Line:</strong> ${escapeHtml(v.line_number)}</div>`
+                        : "";
+
                     html += `
                     <div class="vuln-card">
                         <div class="vuln-header">
-                            <span class="vuln-name">${v.name || 'Vulnerability'}</span>
-                            <span class="vuln-severity">${v.severity || 'N/A'}</span>
+                            <span class="vuln-name">${escapeHtml(heading)}</span>
+                            <span class="vuln-severity">${escapeHtml(sev)}</span>
                         </div>
-                        <div class="detail-row"><strong>CWE/CVE:</strong> ${v.cwe || 'N/A'}</div>
-                        <div class="detail-row"><strong>Code:</strong> <code>${v.vulnerable_code || 'N/A'}</code></div>
-                        <div class="detail-row"><strong>Risk:</strong> ${v.risk || 'N/A'}</div>
-                        <div class="detail-row"><strong>Fix:</strong> ${v.fix || 'N/A'}</div>
+                        <div class="detail-row"><strong>CWE/CVE:</strong> ${escapeHtml(v.cwe || 'N/A')}</div>
+                        ${loc}
+                        <div class="detail-row"><strong>Code:</strong> <code>${escapeHtml(v.vulnerable_code || 'N/A')}</code></div>
+                        <div class="detail-row"><strong>Risk:</strong> ${escapeHtml(v.risk || 'N/A')}</div>
+                        <div class="detail-row"><strong>Fix:</strong> ${escapeHtml(v.fix || 'N/A')}</div>
                     </div>`;
                 });
                 listEl.innerHTML = html;
