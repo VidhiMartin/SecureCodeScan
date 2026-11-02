@@ -65,15 +65,6 @@ _SYSTEM_PROMPT = (
     "Even if the same vulnerability type appears multiple times (e.g., SQL injection in three different routes), you must output three separate objects.\n"
     "Do not output a single object with a comment like 'multiple occurrences' – list each one.\n"
     "Do not skip any vulnerable line – if you are unsure, include it.\n\n"
-    "**Data-flow rule**: A vulnerable *sink* is still vulnerable if the tainted "
-    "value was first assigned to a local variable on an earlier line. For example "
-    "`uid = request.args.get('id')` followed three lines later by "
-    "`cur.execute(f'SELECT ... {uid}')` IS a SQL injection, even though the sink "
-    "line does not mention `request` directly. Trace local variables back to their "
-    "source. Report the sink line, not the assignment line.\n\n"
-    "**IDOR rule**: If a resource is fetched by an ID that came from `request.*`, "
-    "and there is no check that the current user owns that resource, flag it as "
-    "CWE-639 even if the query itself uses a parameterised statement.\n\n"
     "Vulnerability classes to check (non‑exhaustive):\n"
     "- SQL Injection (CWE-89) – string concatenation with user input in SQL queries\n"
     "- OS Command Injection (CWE-78) – use of os.system, os.popen, subprocess with shell=True\n"
@@ -91,10 +82,7 @@ _SYSTEM_PROMPT = (
     "- Race Conditions (CWE-367) – TOCTOU with file operations\n"
     "- Insecure Temporary Files (CWE-377) – tempfile.mkstemp without proper handling\n"
     "- Session Fixation (CWE-384) – setting session from user input without regeneration\n"
-    "- Debug Mode Enabled (CWE-215) – app.run(debug=True) or debug endpoints\n"
-    "- Improper Certificate Validation (CWE-295) – verify=False on requests/httpx\n"
-    "- Server‑Side Request Forgery (CWE-918) – user‑controlled URLs passed to requests\n"
-    "- XML External Entity (CWE-611) – XML parsers with external entities enabled\n\n"
+    "- Debug Mode Enabled (CWE-215) – app.run(debug=True) or debug endpoints\n\n"
     "For each vulnerable line, output a JSON object with these keys:\n"
     '  "cwe"          – e.g., "CWE-89: SQL Injection"\n'
     '  "severity"     – "X/10" (10 = most critical)\n'
@@ -163,22 +151,11 @@ def regex_scan_code(code: str) -> List[Dict]:
                           "vulnerable_code": line.strip()[:50], "line_number": idx,
                           "risk": "Weak hash can be cracked easily.",
                           "fix": "Use SHA-256 or bcrypt for password hashing."})
-
-        # Single CWE-200 per debug endpoint. If the body dumps os.environ, the
-        # next iteration catches it — skip the decorator to avoid a duplicate.
-        if re.search(r'os\.environ', line):
+        if re.search(r'@app\.route.*/debug', line) or re.search(r'os\.environ', line):
             vulns.append({"cwe": "CWE-200: Information Exposure", "severity": "6/10",
                           "vulnerable_code": line.strip()[:50], "line_number": idx,
                           "risk": "Exposes sensitive server information.",
                           "fix": "Remove debug endpoints and avoid printing environment."})
-        elif re.search(r'@app\.route.*/debug', line):
-            next_line = lines[idx] if idx < len(lines) else ""
-            if "os.environ" not in next_line:
-                vulns.append({"cwe": "CWE-200: Information Exposure", "severity": "6/10",
-                              "vulnerable_code": line.strip()[:50], "line_number": idx,
-                              "risk": "Debug endpoint exposed.",
-                              "fix": "Remove debug endpoints in production."})
-
         if re.search(r'if\s+not\s+os\.path\.exists', line) and re.search(r'with\s+open.*?w', line):
             vulns.append({"cwe": "CWE-367: TOCTOU", "severity": "6/10",
                           "vulnerable_code": line.strip()[:50], "line_number": idx,
@@ -189,17 +166,11 @@ def regex_scan_code(code: str) -> List[Dict]:
                           "vulnerable_code": line.strip()[:50], "line_number": idx,
                           "risk": "Temporary file may expose sensitive data.",
                           "fix": "Use tempfile.NamedTemporaryFile with delete=True."})
-
-        # CSRF only fires on POST routes where no csrf/_token check appears
-        # within the next 6 lines of the handler.
-        if re.search(r'@app\.route.*methods\s*=\s*\[[^\]]*POST', line):
-            window = "\n".join(lines[idx:min(idx + 6, len(lines))])
-            if not re.search(r'csrf|_token|X-CSRF|validate_csrf', window, re.IGNORECASE):
-                vulns.append({"cwe": "CWE-352: CSRF", "severity": "6/10",
-                              "vulnerable_code": line.strip()[:50], "line_number": idx,
-                              "risk": "Allows cross-site request forgery attacks.",
-                              "fix": "Add CSRF token validation for state-changing requests."})
-
+        if re.search(r'@app\.route.*POST', line) and not re.search(r'csrf|_token', line, re.IGNORECASE):
+            vulns.append({"cwe": "CWE-352: CSRF", "severity": "6/10",
+                          "vulnerable_code": line.strip()[:50], "line_number": idx,
+                          "risk": "Allows cross-site request forgery attacks.",
+                          "fix": "Add CSRF token validation for state-changing requests."})
         if re.search(r'if\s+.*==\s*[\'"]admin[\'"]', line) and re.search(r'(role|user)', line, re.IGNORECASE):
             vulns.append({"cwe": "CWE-287: Improper Authentication", "severity": "8/10",
                           "vulnerable_code": line.strip()[:50], "line_number": idx,
@@ -210,14 +181,11 @@ def regex_scan_code(code: str) -> List[Dict]:
                           "vulnerable_code": line.strip()[:50], "line_number": idx,
                           "risk": "Allows unauthorised data access.",
                           "fix": "Verify user ownership of requested resource."})
-
-        # Only flag the *definition* of MASTER_OVERRIDE_TOKEN, not every usage.
-        if re.search(r'^\s*MASTER_OVERRIDE_TOKEN\s*=', line):
+        if re.search(r'MASTER_OVERRIDE_TOKEN', line):
             vulns.append({"cwe": "CWE-798: Hard-coded Credentials", "severity": "9/10",
                           "vulnerable_code": line.strip()[:50], "line_number": idx,
                           "risk": "Hardcoded backdoor allows unauthorised admin access.",
                           "fix": "Remove and implement proper authentication."})
-
         if re.search(r'app\.run\s*\(\s*debug\s*=\s*True\s*\)', line):
             vulns.append({"cwe": "CWE-215: Debug Mode Enabled", "severity": "6/10",
                           "vulnerable_code": line.strip()[:50], "line_number": idx,
@@ -228,54 +196,7 @@ def regex_scan_code(code: str) -> List[Dict]:
                           "vulnerable_code": line.strip()[:50], "line_number": idx,
                           "risk": "Allows session hijacking.",
                           "fix": "Regenerate session ID after login."})
-
-        # CWE-22: open(<var>) where <var> was assigned from request.* recently.
-        if re.search(r'open\s*\(\s*[A-Za-z_]\w*\s*[,)]', line):
-            window = "\n".join(lines[max(0, idx - 10):idx])
-            var_match = re.search(r'open\s*\(\s*([A-Za-z_]\w*)', line)
-            if var_match:
-                var = var_match.group(1)
-                if re.search(rf'\b{re.escape(var)}\s*=\s*request\.', window):
-                    vulns.append({"cwe": "CWE-22: Path Traversal", "severity": "8/10",
-                                  "vulnerable_code": line.strip()[:50], "line_number": idx,
-                                  "risk": "User-controlled path allows arbitrary file access.",
-                                  "fix": "Validate path against a whitelist; use realpath+startswith."})
-
-        # CWE-295: TLS verification disabled.
-        if re.search(r'verify\s*=\s*False', line):
-            vulns.append({"cwe": "CWE-295: Improper Certificate Validation", "severity": "7/10",
-                          "vulnerable_code": line.strip()[:50], "line_number": idx,
-                          "risk": "TLS verification disabled enables MITM attacks.",
-                          "fix": "Remove verify=False; pin a CA bundle if needed."})
-
-        # CWE-79: XSS via render_template_string with concat of a
-        # request-derived local variable assigned within the last 5 lines.
-        if re.search(r'render_template_string\s*\(', line) and "+" in line:
-            window = "\n".join(lines[max(0, idx - 5):idx])
-            if re.search(r'=\s*request\.', window):
-                vulns.append({"cwe": "CWE-79: Cross-Site Scripting", "severity": "7/10",
-                              "vulnerable_code": line.strip()[:50], "line_number": idx,
-                              "risk": "Unescaped user input reflected into HTML.",
-                              "fix": "Use render_template with autoescape; avoid string concat."})
-
-        # CWE-639: SQL query on 'id' where the value came from request.* in
-        # the last 10 lines with no ownership check.
-        if re.search(r'(execute|executemany)\s*\(', line) and "id" in line.lower():
-            window = "\n".join(lines[max(0, idx - 10):idx])
-            if re.search(r'[A-Za-z_]\w*\s*=\s*request\.', window) \
-                    and not re.search(r'user_id|owner|current_user|auth', window):
-                already = any(v.get("line_number") == idx and v.get("cwe", "").startswith("CWE-639")
-                              for v in vulns)
-                if not already:
-                    vulns.append({"cwe": "CWE-639: Insecure Direct Object Reference", "severity": "7/10",
-                                  "vulnerable_code": line.strip()[:50], "line_number": idx,
-                                  "risk": "No ownership check before DB fetch.",
-                                  "fix": "Verify user owns the requested resource before querying."})
-
-    for v in vulns:
-        v.setdefault("source", "regex")
     return vulns
-
 
 # ---------- Helpers ----------
 def sanitize_code(code: str) -> str:
@@ -312,16 +233,10 @@ def merge_and_deduplicate(all_vulns: List[Dict]) -> List[Dict]:
         if isinstance(v.get("line_number"), str):
             v["line_number"] = int(v["line_number"]) if v["line_number"].isdigit() else 0
 
-        # Normalise CWE to its bare ID so "CWE-798" and "CWE-798: Hard-coded
-        # Credentials" dedupe against each other.
-        cwe_raw = v.get("cwe", "") or ""
-        m = re.search(r'CWE-\d+', cwe_raw)
-        cwe_key = m.group(0) if m else cwe_raw
-
         if v.get("line_number", 0) == 0:
-            key = (0, cwe_key, v.get("cve", "") or v.get("vulnerable_code", ""))
+            key = (v.get("line_number", 0), v.get("cwe", ""), v.get("cve", "") or v.get("vulnerable_code", ""))
         else:
-            key = (v.get("line_number", 0), cwe_key)
+            key = (v.get("line_number", 0), v.get("cwe", ""))
 
         if key not in seen:
             seen[key] = v
@@ -338,25 +253,27 @@ def merge_and_deduplicate(all_vulns: List[Dict]) -> List[Dict]:
     merged.sort(key=lambda v: _severity_score(v.get("severity", "0/10")), reverse=True)
     return merged
 
-
 def _most_critical(vulns: List[Dict]) -> Dict:
     if not vulns:
         return {"name": "No issues found", "severity": "N/A", "cwe": "N/A",
                 "vulnerable_code": "N/A", "line_number": 0, "risk": "No security issues detected.", "fix": "N/A"}
     return vulns[0]
 
-
 @lru_cache(maxsize=128)
 def get_cached_result(code_hash: str) -> Optional[Dict]:
     return None
 
-
 def set_cached_result(code_hash: str, result: Dict) -> None:
     pass
 
-
 # ---------- Parse requirements.txt ----------
 def parse_requirements_file(filepath: str = "requirements.txt") -> List[str]:
+    """
+    Read a requirements.txt file and return a list of 'package==version' strings.
+    Returns empty list if file not found or unparseable.
+    Also tries the directory of this module (so it works when CWD differs,
+    e.g. on Vercel).
+    """
     candidates = [filepath]
     try:
         module_dir = os.path.dirname(os.path.abspath(__file__))
@@ -382,7 +299,6 @@ def parse_requirements_file(filepath: str = "requirements.txt") -> List[str]:
             logger.warning(f"Failed to read {path}: {e}")
             continue
     return []
-
 
 # ---------- NVD & OSV ----------
 def query_nvd(package: str, version: Optional[str] = None) -> List[Dict]:
@@ -426,8 +342,7 @@ def query_nvd(package: str, version: Optional[str] = None) -> List[Dict]:
                     "vulnerable_code": f"{package} {version or 'unknown'}",
                     "line_number": 0,
                     "risk": cve.get("descriptions", [{}])[0].get("value", "")[:100],
-                    "fix": "Check NVD for patch / upgrade",
-                    "source": "dependency",
+                    "fix": "Check NVD for patch / upgrade"
                 })
             if start_index + params["resultsPerPage"] >= total:
                 break
@@ -436,7 +351,6 @@ def query_nvd(package: str, version: Optional[str] = None) -> List[Dict]:
     except Exception as e:
         logger.warning(f"NVD query failed for {package}: {e}")
         return []
-
 
 def query_osv(package: str, version: Optional[str] = None) -> List[Dict]:
     url = "https://api.osv.dev/v1/query"
@@ -470,14 +384,12 @@ def query_osv(package: str, version: Optional[str] = None) -> List[Dict]:
                 "vulnerable_code": f"{package} {version or 'unknown'}",
                 "line_number": 0,
                 "risk": vuln.get("summary", "")[:100],
-                "fix": vuln.get("references", [{}])[0].get("url", "Check OSV") if vuln.get("references") else "Check OSV",
-                "source": "dependency",
+                "fix": vuln.get("references", [{}])[0].get("url", "Check OSV") if vuln.get("references") else "Check OSV"
             })
         return vulns
     except Exception as e:
         logger.warning(f"OSV query failed for {package}: {e}")
         return []
-
 
 def extract_imports(code: str) -> List[str]:
     try:
@@ -494,7 +406,6 @@ def extract_imports(code: str) -> List[str]:
     except Exception:
         return []
 
-
 def build_dependency_context(dependency_vulns: List[Dict]) -> str:
     if not dependency_vulns:
         return ""
@@ -505,7 +416,6 @@ def build_dependency_context(dependency_vulns: List[Dict]) -> str:
         risk = v.get("risk", "")[:80]
         context += f"- {cwe} / {cve}: {risk}\n"
     return context + "\nUse this information to help identify related vulnerabilities in the code.\n"
-
 
 # ---------- JSON extraction helper ----------
 def _extract_json_array(raw: str) -> List[Dict]:
@@ -572,8 +482,6 @@ def _llm_request(model: str, system_prompt: str, user_content: str, timeout: int
         raw = result["choices"][0]["message"]["content"]
         logger.info(f"[{model}] raw response ({len(raw)} chars): {raw[:200]!r}")
         parsed = _extract_json_array(raw)
-        for v in parsed:
-            v.setdefault("source", "llm")
         logger.info(f"[{model}] parsed {len(parsed)} findings")
         return parsed
     except Exception as e:
@@ -591,7 +499,6 @@ def call_llm(code: str, dependency_context: str = "") -> List[Dict]:
             logger.warning("Primary LLM returned no findings; trying fallback...")
             findings = _llm_request(FALLBACK_MODEL, system_prompt, user_content, timeout=TIMEOUT + 5)
         return findings
-
 
 # ---------- Verification ----------
 def verify_vulnerabilities(code: str, initial_vulns: List[Dict], dep_context: str, attempt: int = 1) -> List[Dict]:
