@@ -303,14 +303,7 @@ def scan(user):
 
         # If no vulnerabilities found
         if not result.get("vulnerabilities"):
-            return jsonify({
-                "name": "No issues found",
-                "severity": "N/A",
-                "cwe": "N/A",
-                "vulnerable_code": "N/A",
-                "risk": "No security issues detected.",
-                "fix": "N/A"
-            })
+            return jsonify({"vulnerabilities": [], "total": 0})
 
         # Return the list of vulnerabilities to the frontend
         logger.info(
